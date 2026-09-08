@@ -1,0 +1,22 @@
+{
+  "name": "onchain-state-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "initialize": "ts-node scripts/initialize.ts",
+    "test:p0": "cargo test --manifest-path programs/onchain-state-solana/Cargo.toml --lib && ts-node scripts/params_selftest.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@meteora-ag/cp-amm-sdk": "^1.4.5",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.95.0",
+    "@sqds/multisig": "^2.1.4",
+    "bn.js": "^5.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.0"
+  }
+}

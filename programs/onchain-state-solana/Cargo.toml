@@ -1,0 +1,24 @@
+[package]
+name = "onchain-state-solana"
+version = "0.1.0"
+description = "On-Chain State governance/treasury program"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "onchain_state_solana"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+default = []
+
+[dependencies]
+anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
+# ВАЖНО: версия anchor-spl должна совпадать (или быть совместимой) с
+# anchor-lang выше. Если cargo/anchor build выдаст ошибку версии —
+# поправь эту строку на ту версию, которую предложит сообщение об ошибке.
+anchor-spl = { version = "1.1.2", features = ["token_2022", "associated_token"] }

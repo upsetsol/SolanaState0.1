@@ -1,0 +1,23 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+.surfpool
+*.log
+build_log.txt
+deploy_log.txt
+test_log.txt
+
+# keys, env, local secrets — never commit
+.env
+.env.*
+*.pem
+id.json
+*-keypair.json
+**/holder-*.json
+scripts/.multisig.json
+.wallet/
+.mint.json

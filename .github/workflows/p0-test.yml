@@ -1,0 +1,42 @@
+# Runs on GitHub's VMs only. No secrets, no deploy, no access to the laptop.
+name: p0-tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  params:
+    name: TEST/PROD param guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx ts-node scripts/params_selftest.ts
+
+  rust-unit:
+    name: program unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.89.0
+      - run: cargo test --manifest-path programs/onchain-state-solana/Cargo.toml --lib
