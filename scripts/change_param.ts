@@ -2,10 +2,10 @@
 // at execution time (see check_param_bounds in lib.rs).
 //
 //   GOVERNANCE_MINT=<mint>
-//   PARAM_KEY=<0..13>   0 voting_period 1 threshold 2/3/4 quorums
+//   PARAM_KEY=<0..14>   0 voting_period 1 threshold 2/3/4 quorums
 //                       5/6 finance daily/weekly 7/8 culture daily/weekly
 //                       9 timelock 10/11/12 payroll pres/finance/culture
-//                       13 spend_cooldown_secs
+//                       13 spend_cooldown_secs 14 exec_fallback_secs
 //   VALUE=<number>
 
 import { getProvider, loadProgram, createProposal, postSnapshot, castVote } from "./lib/env";

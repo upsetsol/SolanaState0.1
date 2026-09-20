@@ -48,6 +48,9 @@ async function main() {
   const decimals = Number(process.env.DECIMALS ?? "9");
   const maxFee = BigInt(process.env.MAX_FEE ?? "18446744073709551615"); // u64::MAX = no cap
   const outPath = process.env.OUT ?? "./.mint.json";
+  // Tax is immutable by default: nobody (not even the deployer) can change it.
+  // FEE_MUTABLE=1 keeps the deployer as fee authority — TEST MINTS ONLY.
+  const feeMutable = process.env.FEE_MUTABLE === "1";
 
   const connection = new Connection(
     process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com",
@@ -65,7 +68,8 @@ async function main() {
   console.log("Mint:               ", mint.publicKey.toBase58());
   console.log("Config PDA:         ", configPda.toBase58());
   console.log("Fee:                ", feeBps, "bps");
-  console.log("transfer-fee config authority: payer", payer.publicKey.toBase58());
+  const feeAuthority = feeMutable ? payer.publicKey : null;
+  console.log("transfer-fee config authority:", feeAuthority ? feeAuthority.toBase58() + "  (MUTABLE — test only)" : "none — tax frozen forever");
   console.log("withdraw-withheld authority:   Config PDA", configPda.toBase58());
 
   const mintLen = getMintLen([ExtensionType.TransferFeeConfig]);
@@ -81,7 +85,7 @@ async function main() {
     }),
     createInitializeTransferFeeConfigInstruction(
       mint.publicKey,
-      payer.publicKey, // transfer-fee config authority (can retune the fee later)
+      feeAuthority, // null = the tax rate is frozen forever (prod default)
       configPda, // withdraw-withheld authority — MUST be the Config PDA
       feeBps,
       maxFee,

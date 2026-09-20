@@ -69,7 +69,8 @@ async function main() {
       new anchor.BN(params.payrollCultureBps),
       new anchor.BN(params.citizenshipThresholdBps),
       new anchor.BN(params.milestoneDepositBps),
-      new anchor.BN(params.spendCooldownSecs)
+      new anchor.BN(params.spendCooldownSecs),
+      new anchor.BN(params.execFallbackSecs)
     )
     .accounts({
       owner: provider.wallet.publicKey,

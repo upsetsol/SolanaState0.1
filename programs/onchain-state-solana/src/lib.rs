@@ -19,7 +19,8 @@ declare_id!("FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy");
 //    supply - treasury (coins actually in people's hands), so tax piling up
 //    in the treasury does not silently raise the bar.
 //  * Timelock now applies to EVERY proposal type, SPEND included.
-//  * execute_proposal is owners_authority-only (was permissionless).
+//  * execute_proposal is owners_authority-only (was permissionless), with a
+//    president fallback (see below).
 //  * President / finance minister / culture minister must be distinct.
 //  * CHANGE_PARAM values are bounds-checked (see check_param_bounds).
 //  * admin_authority (separate from owners_authority): can pause all
@@ -31,6 +32,8 @@ declare_id!("FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy");
 //    the minister's key no longer resets the weekly window.
 //  * Milestone Fund is topped up only through governance (proposal type 6)
 //    and only up to milestone_deposit_bps of the treasury.
+//  * If owners_authority doesn't execute a passed proposal, the president can
+//    after exec_fallback_secs (default 1 day) past the timelock.
 //  * Money-moving proposals (SPEND, milestone deposit) can only be EXECUTED
 //    once per spend_cooldown_secs — you can't run several 30% spends
 //    back-to-back to drain the treasury.
@@ -55,6 +58,8 @@ pub const MIN_VOTING_PERIOD_SECS: i64 = 300;
 pub const MAX_VOTING_PERIOD_SECS: i64 = 30 * SECONDS_PER_DAY;
 pub const MAX_TIMELOCK_SECS: i64 = 14 * SECONDS_PER_DAY;
 pub const MAX_SPEND_COOLDOWN_SECS: i64 = 30 * SECONDS_PER_DAY;
+pub const MIN_EXEC_FALLBACK_SECS: i64 = 3_600;
+pub const MAX_EXEC_FALLBACK_SECS: i64 = 30 * SECONDS_PER_DAY;
 /// Max % of the morning treasury a role's salary can be set to, per day.
 pub const MAX_PAYROLL_BPS: u64 = 100; // 1%/day
 /// Max % of the morning treasury a minister daily/weekly limit can be set to.
@@ -78,6 +83,22 @@ pub fn quorum_met(total_votes: u128, supply: u128, treasury_amount: u64, quorum_
 /// 30%-of-treasury ceiling for a single SPEND proposal.
 pub fn spend_cap(treasury_amount: u64) -> u128 {
     (treasury_amount as u128) * MAX_SPEND_BPS as u128 / BPS_DENOM as u128
+}
+
+/// Who may execute a passed proposal: owners_authority any time after the
+/// timelock; the president only as a fallback, once `fallback_secs` have
+/// passed after the timelock without owners acting. The president can only
+/// trigger what the community already approved (vote + quorum + timelock).
+pub fn can_execute(
+    executor: &Pubkey,
+    owners: &Pubkey,
+    president: &Pubkey,
+    now: i64,
+    unlock_at: i64,
+    fallback_secs: i64,
+) -> bool {
+    executor == owners
+        || (executor == president && now >= unlock_at.saturating_add(fallback_secs))
 }
 
 /// True when enough time has passed since the last money-moving proposal was
@@ -113,7 +134,7 @@ pub fn day_index(now: i64) -> i64 {
 /// param_key mapping is the same as the match in execute_proposal.
 pub fn check_param_bounds(param_key: u8, amount: u64) -> Result<()> {
     // Keys 0, 9, 13 get cast to i64 — reject anything that wouldn't fit.
-    if param_key == 0 || param_key == 9 || param_key == 13 {
+    if param_key == 0 || param_key == 9 || param_key == 13 || param_key == 14 {
         require!(amount <= i64::MAX as u64, GovError::ParamOutOfBounds);
     }
     match param_key {
@@ -127,6 +148,13 @@ pub fn check_param_bounds(param_key: u8, amount: u64) -> Result<()> {
         9 => {
             let v = amount as i64;
             require!(v >= 0 && v <= MAX_TIMELOCK_SECS, GovError::ParamOutOfBounds);
+        }
+        14 => {
+            let v = amount as i64;
+            require!(
+                v >= MIN_EXEC_FALLBACK_SECS && v <= MAX_EXEC_FALLBACK_SECS,
+                GovError::ParamOutOfBounds
+            );
         }
         13 => {
             let v = amount as i64;
@@ -191,6 +219,7 @@ pub mod onchain_state_solana {
         citizenship_threshold_bps: u64,
         milestone_deposit_bps: u64,
         spend_cooldown_secs: i64,
+        exec_fallback_secs: i64,
     ) -> Result<()> {
         require!(owners_authority != Pubkey::default(), GovError::ZeroAddress);
         require!(admin_authority != Pubkey::default(), GovError::ZeroAddress);
@@ -198,6 +227,7 @@ pub mod onchain_state_solana {
         require!(voting_period_secs > 0, GovError::InvalidBps);
         require!(timelock_secs >= 0, GovError::InvalidBps);
         require!(spend_cooldown_secs >= 0, GovError::InvalidBps);
+        require!(exec_fallback_secs > 0, GovError::InvalidBps);
         require!(citizenship_threshold_bps <= BPS_DENOM, GovError::InvalidBps);
         require!(milestone_deposit_bps <= BPS_DENOM, GovError::InvalidBps);
 
@@ -227,6 +257,7 @@ pub mod onchain_state_solana {
         config.milestone_deposit_bps = milestone_deposit_bps;
         config.spend_cooldown_secs = spend_cooldown_secs;
         config.last_spend_ts = 0;
+        config.exec_fallback_secs = exec_fallback_secs;
         config.milestone_reserved = 0;
         config.treasury_snapshot_amount = 0;
         // Sentinel: 0 is never a real day index, so the first claim_salary /
@@ -440,11 +471,6 @@ pub mod onchain_state_solana {
     /// type, SPEND included). For SPEND — re-checks the 30% cap at execution
     /// time.
     pub fn execute_proposal(ctx: Context<ExecuteProposal>, _proposal_id: u64) -> Result<()> {
-        require_keys_eq!(
-            ctx.accounts.executor.key(),
-            ctx.accounts.config.owners_authority,
-            GovError::NotOwner
-        );
         require!(!ctx.accounts.config.paused, GovError::Paused);
 
         let now = Clock::get()?.unix_timestamp;
@@ -484,6 +510,20 @@ pub mod onchain_state_solana {
         // (e.g. impeach) before a decision takes effect, and a spend leaves.
         let unlock_at = ctx.accounts.proposal.deadline + ctx.accounts.config.timelock_secs;
         require!(now >= unlock_at, GovError::TimelockNotElapsed);
+
+        // owners_authority executes; the president may step in only after
+        // exec_fallback_secs of owner inaction (liveness fallback).
+        require!(
+            can_execute(
+                &ctx.accounts.executor.key(),
+                &ctx.accounts.config.owners_authority,
+                &ctx.accounts.config.president,
+                now,
+                unlock_at,
+                ctx.accounts.config.exec_fallback_secs
+            ),
+            GovError::NotOwner
+        );
 
         // Money-moving proposals (SPEND, milestone deposit) can only be
         // executed once per spend_cooldown_secs — no back-to-back drains.
@@ -579,6 +619,7 @@ pub mod onchain_state_solana {
                     11 => cfg.payroll_finance_bps = amount,
                     12 => cfg.payroll_culture_bps = amount,
                     13 => cfg.spend_cooldown_secs = amount as i64,
+                    14 => cfg.exec_fallback_secs = amount as i64,
                     _ => return err!(GovError::InvalidParamKey),
                 }
             }
@@ -1025,23 +1066,23 @@ pub struct CreateProposal<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         constraint = creator_token_account.mint == governance_mint.key(),
         constraint = creator_token_account.owner == creator.key(),
     )]
-    pub creator_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub creator_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     #[account(
         associated_token::mint = governance_mint,
         associated_token::authority = config,
         associated_token::token_program = token_program,
     )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         init,
@@ -1050,7 +1091,7 @@ pub struct CreateProposal<'info> {
         seeds = [b"proposal", config.key().as_ref(), &config.proposal_count.to_le_bytes()],
         bump
     )]
-    pub proposal: Account<'info, Proposal>,
+    pub proposal: Box<Account<'info, Proposal>>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
@@ -1078,7 +1119,7 @@ pub struct Vote<'info> {
 #[derive(Accounts)]
 #[instruction(proposal_id: u64)]
 pub struct ExecuteProposal<'info> {
-    pub executor: Signer<'info>, // must be config.owners_authority
+    pub executor: Signer<'info>, // owners_authority, or president after exec_fallback_secs
 
     pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
 
@@ -1354,6 +1395,7 @@ pub struct Config {
     pub citizenship_threshold_bps: u64,
     pub milestone_deposit_bps: u64,
     pub spend_cooldown_secs: i64,
+    pub exec_fallback_secs: i64,
     pub last_spend_ts: i64,
     pub milestone_reserved: u64,
     pub treasury_snapshot_amount: u64,
@@ -1597,6 +1639,21 @@ mod p0_tests {
     }
 
     #[test]
+    fn executor_rules() {
+        let owners = Pubkey::new_unique();
+        let pres = Pubkey::new_unique();
+        let other = Pubkey::new_unique();
+        // owners always ok
+        assert!(can_execute(&owners, &owners, &pres, 100, 100, 86_400));
+        // president too early
+        assert!(!can_execute(&pres, &owners, &pres, 100 + 86_399, 100, 86_400));
+        // president after the fallback window
+        assert!(can_execute(&pres, &owners, &pres, 100 + 86_400, 100, 86_400));
+        // random wallet never
+        assert!(!can_execute(&other, &owners, &pres, 10_000_000, 100, 86_400));
+    }
+
+    #[test]
     fn spend_cooldown() {
         // never spent before — always ok
         assert!(spend_cooldown_ok(0, 1_000, 86_400));
@@ -1659,7 +1716,8 @@ mod p0_tests {
         assert!(check_param_bounds(9, u64::MAX).is_err()); // timelock i64 overflow
         assert!(check_param_bounds(0, (MAX_VOTING_PERIOD_SECS as u64) + 1).is_err());
         assert!(check_param_bounds(13, (MAX_SPEND_COOLDOWN_SECS as u64) + 1).is_err());
-        assert!(check_param_bounds(14, 1).is_err()); // unknown key
+        assert!(check_param_bounds(14, 60).is_err()); // fallback < 1h
+        assert!(check_param_bounds(15, 1).is_err()); // unknown key
     }
 
     #[test]
@@ -1669,6 +1727,7 @@ mod p0_tests {
         assert!(check_param_bounds(9, 0).is_ok()); // zero timelock allowed
         assert!(check_param_bounds(10, 50).is_ok()); // 0.5%/day payroll
         assert!(check_param_bounds(13, 86_400).is_ok()); // 1-day spend cooldown
+        assert!(check_param_bounds(14, 86_400).is_ok()); // 1-day president fallback
     }
 
     // ---- treasury snapshot ----
@@ -1700,6 +1759,7 @@ mod p0_tests {
             citizenship_threshold_bps: 0,
             milestone_deposit_bps: 0,
             spend_cooldown_secs: 0,
+            exec_fallback_secs: 0,
             last_spend_ts: 0,
             milestone_reserved: 0,
             treasury_snapshot_amount: 0,

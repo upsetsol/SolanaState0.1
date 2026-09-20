@@ -120,7 +120,7 @@ async function main() {
       }),
       createInitializeTransferFeeConfigInstruction(
         mint.publicKey,
-        me,
+        null, // tax frozen forever, like prod
         configPda,
         FEE_BPS,
         BigInt("18446744073709551615"),
@@ -177,7 +177,8 @@ async function main() {
   // ---------- initialize (ultra-short windows) ----------
   const VOTE = 14,
     TL = 7,
-    COOL = 10;
+    COOL = 10,
+    FB = 6;
   await expectOk("initialize", () =>
     program.methods
       .initialize(
@@ -199,7 +200,8 @@ async function main() {
         new anchor.BN(5),
         new anchor.BN(25), // citizenship 0.25%
         new anchor.BN(1000), // milestone deposit 10%
-        new anchor.BN(COOL)
+        new anchor.BN(COOL),
+        new anchor.BN(FB)
       )
       .accounts({
         owner: me,
@@ -693,6 +695,40 @@ async function main() {
         })
         .rpc()
     );
+  }
+
+  // ===== president fallback execution =====
+  {
+    await expectOk("make holder A president (executed by owners)", () =>
+      passRole(1, holders[0].publicKey, "A president")
+    );
+    // wait out spend cooldown irrelevant (role change) — now propose handing it back to `me`
+    const { id, pPda } = await propose(1, me, 0, 0, "president back to owners key");
+    await snapshot(id, pPda, holders[0].publicKey);
+    await snapshot(id, pPda, holders[1].publicKey);
+    await vote(holders[0], id, pPda, true);
+    await vote(holders[1], id, pPda, true);
+    const dl = await deadlineOf(pPda);
+    await waitChain(dl + TL + 1);
+    const execAsA = () =>
+      progFor(holders[0])
+        .methods.executeProposal(new anchor.BN(id.toString()))
+        .accounts({
+          executor: holders[0].publicKey,
+          governanceMint: mint.publicKey,
+          config: configPda,
+          proposal: pPda,
+          treasury,
+          recipientTokenAccount: null,
+          milestoneFund: null,
+          tokenProgram: TP,
+        })
+        .rpc();
+    await expectErr("president executes too early (owners still have time) → NotOwner", "NotOwner", execAsA);
+    await waitChain(dl + TL + FB + 2);
+    await expectOk("president executes after owners stay silent (fallback)", execAsA);
+    const cfgP = await program.account.config.fetch(configPda);
+    record("fallback execution applied the vote", cfgP.president.equals(me), cfgP.president.toBase58());
   }
 
   // ===== harvest_fees =====

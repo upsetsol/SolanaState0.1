@@ -19,6 +19,7 @@ export type GovernanceParams = {
   citizenshipThresholdBps: number;
   milestoneDepositBps: number;
   spendCooldownSecs: number;
+  execFallbackSecs: number;
 };
 
 /** Short windows so a test cycle fits in one sitting. Not for mainnet. */
@@ -39,6 +40,7 @@ export const TEST_PARAMS: GovernanceParams = {
   citizenshipThresholdBps: 25, // 0.25% of supply
   milestoneDepositBps: 1000, // ≤10% of treasury per governance-approved deposit
   spendCooldownSecs: 120, // min gap between executed SPEND / milestone-deposit proposals
+  execFallbackSecs: 3_600, // president may execute if owners don't, after this long
 };
 
 /** Conservative production defaults. Tune before a real launch. */
@@ -59,6 +61,7 @@ export const PROD_PARAMS: GovernanceParams = {
   citizenshipThresholdBps: 25, // 0.25% of supply
   milestoneDepositBps: 500, // ≤5% of treasury per governance-approved deposit
   spendCooldownSecs: 86_400, // one money-moving proposal per day
+  execFallbackSecs: 86_400, // president executes if owners are silent for a day
 };
 
 export function isMainnetRpc(url: string): boolean {
