@@ -138,7 +138,7 @@ solana program deploy target/deploy/onchain_state_solana.so \
 ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node scripts/e2e.ts
 ```
 
-Последний прогон на локальном валидаторе: **46/46 PASS**.
+Последний прогон: **46/46 PASS** и на локальном валидаторе, и на живом devnet.
 
 Сценарные скрипты `scripts/test_*.ts` — точечные ручные проверки против devnet.
 Полноценные интеграционные тесты (litesvm/bankrun) в CI — следующий шаг.

@@ -68,7 +68,20 @@ async function expectOk(name: string, fn: () => Promise<any>) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const conn = new Connection(RPC, "confirmed");
+// Flaky networks (public RPCs, sandboxes) reset connections: retry transport errors.
+async function retryFetch(input: any, init?: any): Promise<any> {
+  let last: any;
+  for (let i = 0; i < 8; i++) {
+    try {
+      return await fetch(input, init);
+    } catch (e) {
+      last = e;
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw last;
+}
+const conn = new Connection(RPC, { commitment: "confirmed", fetch: retryFetch as any });
 async function chainNow() {
   const s = await conn.getSlot();
   return (await conn.getBlockTime(s)) ?? Math.floor(Date.now() / 1000);
