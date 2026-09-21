@@ -1,0 +1,2699 @@
+{
+  "address": "FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy",
+  "metadata": {
+    "name": "onchain_state_solana",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "On-Chain State governance/treasury program"
+  },
+  "instructions": [
+    {
+      "name": "claim_milestone",
+      "docs": [
+        "Pays a citizen their share. No signature from the citizen required —",
+        "the team pushes each payout to the recorded holder's ATA. Once per",
+        "milestone, only after finalize_milestone.",
+        "share = (fund_snapshot * payout_bps / 10000) * (weight / total_weight)"
+      ],
+      "discriminator": [
+        211,
+        134,
+        152,
+        37,
+        3,
+        82,
+        214,
+        189
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Whoever submits + pays the tx fee (on practice: owners). The citizen",
+            "does not sign — the payout is pushed to their recorded ATA."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "milestone_number"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "milestone_record"
+              },
+              {
+                "kind": "arg",
+                "path": "holder"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_fund",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "claimant_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "_milestone_number",
+          "type": "u64"
+        },
+        {
+          "name": "_holder",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "claim_salary",
+      "docs": [
+        "Claim salary for a role — once a day, a fixed % of the MORNING treasury",
+        "snapshot (not the live balance). Does not use up minister_spend's",
+        "daily/weekly limit — this is separate, guaranteed income for holding",
+        "the role."
+      ],
+      "discriminator": [
+        253,
+        112,
+        47,
+        40,
+        140,
+        213,
+        22,
+        141
+      ],
+      "accounts": [
+        {
+          "name": "claimant",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payroll_claim",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  114,
+                  111,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "claimant"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "claimant_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_milestone",
+      "docs": [
+        "Owners declare a new milestone. The payout percentage locks in right",
+        "away (min(30% + 5%*(n-1), 50%)); the base is frozen later in",
+        "finalize_milestone."
+      ],
+      "discriminator": [
+        239,
+        58,
+        201,
+        28,
+        40,
+        186,
+        173,
+        48
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "config.next_milestone_number",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_proposal",
+      "docs": [
+        "Create a proposal. Unlike voting, the creation threshold reads the",
+        "creator's LIVE balance against the circulating base (supply - treasury)",
+        "— deliberately fine, because creating a proposal doesn't execute",
+        "anything, it just opens a discussion.",
+        "proposal_type: 0=SPEND 1=ChangePresident 2=AppointFinance",
+        "3=AppointCulture 4=ChangeParam 5=ChangeOwnersAuthority",
+        "6=DepositToMilestoneFund"
+      ],
+      "discriminator": [
+        132,
+        116,
+        68,
+        174,
+        216,
+        160,
+        198,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "creator_token_account"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "proposal",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "config.proposal_count",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "proposal_type",
+          "type": "u8"
+        },
+        {
+          "name": "target",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "param_key",
+          "type": "u8"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "execute_proposal",
+      "docs": [
+        "Executes a proposal. owners_authority only. The deadline must have",
+        "passed, quorum + majority met, and the timelock elapsed (for EVERY",
+        "type, SPEND included). For SPEND — re-checks the 30% cap at execution",
+        "time."
+      ],
+      "discriminator": [
+        186,
+        60,
+        116,
+        133,
+        108,
+        128,
+        111,
+        28
+      ],
+      "accounts": [
+        {
+          "name": "executor",
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposal",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "proposal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "recipient_token_account",
+          "docs": [
+            "Recipient token account — required for SPEND (type 0). Owner is checked",
+            "against proposal.target inside execute_proposal. Omit for other types."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "milestone_fund",
+          "docs": [
+            "The Milestone Fund — required for DEPOSIT_TO_MILESTONE_FUND (type 6)."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "_proposal_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "finalize_milestone",
+      "docs": [
+        "Freezes the payout base and reserves the pool so a later milestone",
+        "cannot promise the same coins. Base = milestone_fund balance minus",
+        "what earlier milestones still owe (config.milestone_reserved)."
+      ],
+      "discriminator": [
+        7,
+        134,
+        89,
+        13,
+        34,
+        31,
+        108,
+        149
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "milestone_number"
+              }
+            ]
+          }
+        },
+        {
+          "name": "previous_milestone",
+          "docs": [
+            "Required when finalizing milestone 2+. Must be the immediately",
+            "previous record. Omit for milestone 1."
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "milestone_number.checked_sub(1).unwrap_or(0)"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_fund",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "_milestone_number",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "harvest_fees",
+      "docs": [
+        "Permissionless \"cleanup\" — collects the Token-2022 transfer-fee tax",
+        "that piled up on the given accounts and sweeps it into the treasury.",
+        "Not pause-gated: this is an INFLOW to the treasury, not a spend."
+      ],
+      "discriminator": [
+        90,
+        149,
+        158,
+        241,
+        163,
+        186,
+        155,
+        202
+      ],
+      "accounts": [
+        {
+          "name": "governance_mint",
+          "writable": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Sets up Config + treasury (an ATA of governance_mint, owned by the Config PDA).",
+        "`owners_authority` (typically a Squads vault) posts vote snapshots and",
+        "executes proposals. `admin_authority` (a separate key/multisig) can pause",
+        "treasury outflows and tune the citizenship threshold. The payer signs and",
+        "pays rent but gets no standing power. Ministers start vacant."
+      ],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "owners_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "admin_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "president",
+          "type": "pubkey"
+        },
+        {
+          "name": "voting_period_secs",
+          "type": "i64"
+        },
+        {
+          "name": "proposal_threshold_bps",
+          "type": "u64"
+        },
+        {
+          "name": "quorum_spend_bps",
+          "type": "u64"
+        },
+        {
+          "name": "quorum_role_bps",
+          "type": "u64"
+        },
+        {
+          "name": "quorum_param_bps",
+          "type": "u64"
+        },
+        {
+          "name": "finance_daily_bps",
+          "type": "u64"
+        },
+        {
+          "name": "finance_weekly_bps",
+          "type": "u64"
+        },
+        {
+          "name": "culture_daily_bps",
+          "type": "u64"
+        },
+        {
+          "name": "culture_weekly_bps",
+          "type": "u64"
+        },
+        {
+          "name": "timelock_secs",
+          "type": "i64"
+        },
+        {
+          "name": "payroll_president_bps",
+          "type": "u64"
+        },
+        {
+          "name": "payroll_finance_bps",
+          "type": "u64"
+        },
+        {
+          "name": "payroll_culture_bps",
+          "type": "u64"
+        },
+        {
+          "name": "citizenship_threshold_bps",
+          "type": "u64"
+        },
+        {
+          "name": "milestone_deposit_bps",
+          "type": "u64"
+        },
+        {
+          "name": "spend_cooldown_secs",
+          "type": "i64"
+        },
+        {
+          "name": "exec_fallback_secs",
+          "type": "i64"
+        },
+        {
+          "name": "milestone_grace_secs",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "minister_spend",
+      "docs": [
+        "Autonomous minister spend (finance/culture) — WITHOUT a vote, within",
+        "rolling limits as a % of the MORNING treasury snapshot. Limits are",
+        "tracked per ROLE (role 1 = finance, 2 = culture), so swapping the",
+        "minister's wallet does not reset the window. `reason` is required",
+        "(not checked for relevance — that restriction is reputational)."
+      ],
+      "discriminator": [
+        209,
+        238,
+        142,
+        202,
+        169,
+        187,
+        156,
+        147
+      ],
+      "accounts": [
+        {
+          "name": "minister",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "spend_tracker",
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "role",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "post_milestone_snapshot",
+      "docs": [
+        "Manual \"citizen\" snapshot for a milestone. Weight must equal the",
+        "holder's real balance and be >= citizenship_threshold_bps of supply."
+      ],
+      "discriminator": [
+        225,
+        108,
+        170,
+        90,
+        65,
+        92,
+        185,
+        91
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "_milestone_number"
+              }
+            ]
+          }
+        },
+        {
+          "name": "holder_token_account",
+          "docs": [
+            "The holder's real token account — weight is read from here."
+          ]
+        },
+        {
+          "name": "milestone_snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "milestone_record"
+              },
+              {
+                "kind": "arg",
+                "path": "holder"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "_milestone_number",
+          "type": "u64"
+        },
+        {
+          "name": "holder",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "post_voter_snapshot",
+      "docs": [
+        "Manual snapshot: only owners_authority can register a voter's weight",
+        "for a proposal. The weight is NOT a free-form number — it must equal",
+        "the voter's real balance in `voter_token_account` right now. Snapshots",
+        "can only be added while no vote has been cast yet, so owners can't",
+        "watch the tally and add favourable voters later. Created once (`init`):",
+        "weight cannot be rewritten and `consumed` cannot be cleared."
+      ],
+      "discriminator": [
+        136,
+        13,
+        177,
+        164,
+        88,
+        145,
+        254,
+        235
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposal",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "_proposal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "voter_token_account",
+          "docs": [
+            "The voter's real token account — weight is read from here, not passed in."
+          ]
+        },
+        {
+          "name": "voter_snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  111,
+                  116,
+                  101,
+                  114,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "proposal"
+              },
+              {
+                "kind": "arg",
+                "path": "voter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "_proposal_id",
+          "type": "u64"
+        },
+        {
+          "name": "voter",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "release_milestone_reserve",
+      "docs": [
+        "Closes a milestone after the claim grace period: whatever was promised",
+        "but not paid out returns to the fund's free balance (the reserve is",
+        "released), so the next milestone can use it. Claims on a closed",
+        "milestone are no longer possible. owners_authority only."
+      ],
+      "discriminator": [
+        175,
+        211,
+        178,
+        60,
+        210,
+        88,
+        179,
+        90
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "milestone_number"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "_milestone_number",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_citizenship_threshold",
+      "docs": [
+        "admin_authority tunes the \"who counts as a citizen\" threshold.",
+        "Kept off the voting path deliberately (see project notes)."
+      ],
+      "discriminator": [
+        35,
+        244,
+        242,
+        208,
+        211,
+        97,
+        218,
+        11
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "bps",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_pause",
+      "docs": [
+        "admin_authority flips the global pause on all treasury/fund outflows.",
+        "Meant as a break-glass while a bug is being patched."
+      ],
+      "discriminator": [
+        63,
+        32,
+        154,
+        2,
+        56,
+        103,
+        79,
+        45
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "setup_milestone_fund",
+      "docs": [
+        "One-time: create the Milestone Fund token account (PDA) and record its",
+        "address in Config. Call after `initialize` if milestones will be used."
+      ],
+      "discriminator": [
+        195,
+        80,
+        52,
+        8,
+        241,
+        128,
+        191,
+        213
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone_fund",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "vote",
+      "docs": [
+        "Holders vote themselves, each with their own transaction — weight comes",
+        "from the verified snapshot (VoterSnapshot), which must already exist."
+      ],
+      "discriminator": [
+        227,
+        110,
+        155,
+        23,
+        136,
+        126,
+        172,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "voter",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposal",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "proposal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "voter_snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  111,
+                  116,
+                  101,
+                  114,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "proposal"
+              },
+              {
+                "kind": "account",
+                "path": "voter"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "_proposal_id",
+          "type": "u64"
+        },
+        {
+          "name": "support",
+          "type": "bool"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "MilestoneRecord",
+      "discriminator": [
+        251,
+        118,
+        88,
+        101,
+        199,
+        181,
+        221,
+        85
+      ]
+    },
+    {
+      "name": "MilestoneSnapshot",
+      "discriminator": [
+        138,
+        95,
+        198,
+        181,
+        145,
+        119,
+        233,
+        162
+      ]
+    },
+    {
+      "name": "PayrollClaim",
+      "discriminator": [
+        47,
+        89,
+        92,
+        11,
+        106,
+        132,
+        199,
+        157
+      ]
+    },
+    {
+      "name": "Proposal",
+      "discriminator": [
+        26,
+        94,
+        189,
+        187,
+        116,
+        136,
+        53,
+        33
+      ]
+    },
+    {
+      "name": "SpendTracker",
+      "discriminator": [
+        180,
+        17,
+        195,
+        180,
+        162,
+        207,
+        239,
+        205
+      ]
+    },
+    {
+      "name": "VoterSnapshot",
+      "discriminator": [
+        129,
+        46,
+        88,
+        165,
+        229,
+        23,
+        141,
+        109
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ZeroAddress",
+      "msg": "Zero address not allowed"
+    },
+    {
+      "code": 6001,
+      "name": "NotOwner",
+      "msg": "Only owners_authority can call this"
+    },
+    {
+      "code": 6002,
+      "name": "NotAdmin",
+      "msg": "Only admin_authority can call this"
+    },
+    {
+      "code": 6003,
+      "name": "Paused",
+      "msg": "Treasury outflows are paused"
+    },
+    {
+      "code": 6004,
+      "name": "ReasonTooLong",
+      "msg": "Reason exceeds max length"
+    },
+    {
+      "code": 6005,
+      "name": "ReasonRequired",
+      "msg": "Reason is required"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidProposalType",
+      "msg": "Invalid proposal type"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidParamKey",
+      "msg": "Invalid param key"
+    },
+    {
+      "code": 6008,
+      "name": "ParamOutOfBounds",
+      "msg": "Parameter value out of allowed bounds"
+    },
+    {
+      "code": 6009,
+      "name": "BelowThreshold",
+      "msg": "Creator balance below proposal threshold"
+    },
+    {
+      "code": 6010,
+      "name": "ExceedsSpendCap",
+      "msg": "Amount exceeds 30% treasury spend cap"
+    },
+    {
+      "code": 6011,
+      "name": "ExceedsMilestoneDepositCap",
+      "msg": "Amount exceeds milestone deposit cap"
+    },
+    {
+      "code": 6012,
+      "name": "InsufficientTreasury",
+      "msg": "Amount exceeds treasury balance"
+    },
+    {
+      "code": 6013,
+      "name": "ProposalNotActive",
+      "msg": "Voting period still active"
+    },
+    {
+      "code": 6014,
+      "name": "ProposalStillActive",
+      "msg": "Voting period already ended"
+    },
+    {
+      "code": 6015,
+      "name": "AlreadyExecuted",
+      "msg": "Proposal already executed"
+    },
+    {
+      "code": 6016,
+      "name": "VotingAlreadyStarted",
+      "msg": "Cannot add snapshots after voting has started"
+    },
+    {
+      "code": 6017,
+      "name": "QuorumNotReached",
+      "msg": "Quorum not reached"
+    },
+    {
+      "code": 6018,
+      "name": "TimelockNotElapsed",
+      "msg": "Timelock has not elapsed yet"
+    },
+    {
+      "code": 6019,
+      "name": "SpendCooldown",
+      "msg": "Another spend was executed too recently (spend cooldown)"
+    },
+    {
+      "code": 6020,
+      "name": "NotEligibleForPayroll",
+      "msg": "Signer is not eligible for payroll (not president/minister)"
+    },
+    {
+      "code": 6021,
+      "name": "PayrollTooSoon",
+      "msg": "Salary already claimed today"
+    },
+    {
+      "code": 6022,
+      "name": "NothingToClaim",
+      "msg": "Nothing to claim (bps is 0 or balance empty)"
+    },
+    {
+      "code": 6023,
+      "name": "ProposalRejected",
+      "msg": "Proposal did not pass (against >= for)"
+    },
+    {
+      "code": 6024,
+      "name": "NotYourSnapshot",
+      "msg": "This snapshot does not belong to you"
+    },
+    {
+      "code": 6025,
+      "name": "SnapshotAccountMismatch",
+      "msg": "Snapshot token account does not match the voter/holder or mint"
+    },
+    {
+      "code": 6026,
+      "name": "AlreadyVoted",
+      "msg": "Already voted"
+    },
+    {
+      "code": 6027,
+      "name": "NoWeight",
+      "msg": "No voting weight registered"
+    },
+    {
+      "code": 6028,
+      "name": "RoleConflict",
+      "msg": "A role must be held by a distinct address"
+    },
+    {
+      "code": 6029,
+      "name": "NotMinister",
+      "msg": "Signer is not finance or culture minister"
+    },
+    {
+      "code": 6030,
+      "name": "WrongRecipient",
+      "msg": "Recipient does not match the approved proposal target"
+    },
+    {
+      "code": 6031,
+      "name": "MilestoneFundMissing",
+      "msg": "Milestone fund account missing or mismatched"
+    },
+    {
+      "code": 6032,
+      "name": "ExceedsDailyLimit",
+      "msg": "Exceeds daily spend limit"
+    },
+    {
+      "code": 6033,
+      "name": "ExceedsWeeklyLimit",
+      "msg": "Exceeds weekly spend limit"
+    },
+    {
+      "code": 6034,
+      "name": "BelowCitizenshipThreshold",
+      "msg": "Holder weight below citizenship threshold"
+    },
+    {
+      "code": 6035,
+      "name": "MilestoneFinalized",
+      "msg": "Milestone already finalized"
+    },
+    {
+      "code": 6036,
+      "name": "MilestoneNotFinalized",
+      "msg": "Milestone not finalized yet"
+    },
+    {
+      "code": 6037,
+      "name": "InvalidBps",
+      "msg": "Invalid config parameter"
+    },
+    {
+      "code": 6038,
+      "name": "PreviousMilestoneNotFinalized",
+      "msg": "Previous milestone is missing or not yet finalized"
+    },
+    {
+      "code": 6039,
+      "name": "AlreadyClaimedMilestone",
+      "msg": "Milestone reward already claimed"
+    },
+    {
+      "code": 6040,
+      "name": "MilestoneClosed",
+      "msg": "Milestone is closed (unclaimed part already returned to the fund)"
+    },
+    {
+      "code": 6041,
+      "name": "MilestoneGraceNotElapsed",
+      "msg": "Claim grace period has not elapsed yet"
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owners_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "president",
+            "type": "pubkey"
+          },
+          {
+            "name": "finance_minister",
+            "type": "pubkey"
+          },
+          {
+            "name": "culture_minister",
+            "type": "pubkey"
+          },
+          {
+            "name": "governance_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "milestone_fund_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "voting_period_secs",
+            "type": "i64"
+          },
+          {
+            "name": "proposal_threshold_bps",
+            "type": "u64"
+          },
+          {
+            "name": "quorum_spend_bps",
+            "type": "u64"
+          },
+          {
+            "name": "quorum_role_bps",
+            "type": "u64"
+          },
+          {
+            "name": "quorum_param_bps",
+            "type": "u64"
+          },
+          {
+            "name": "finance_daily_bps",
+            "type": "u64"
+          },
+          {
+            "name": "finance_weekly_bps",
+            "type": "u64"
+          },
+          {
+            "name": "culture_daily_bps",
+            "type": "u64"
+          },
+          {
+            "name": "culture_weekly_bps",
+            "type": "u64"
+          },
+          {
+            "name": "timelock_secs",
+            "type": "i64"
+          },
+          {
+            "name": "payroll_president_bps",
+            "type": "u64"
+          },
+          {
+            "name": "payroll_finance_bps",
+            "type": "u64"
+          },
+          {
+            "name": "payroll_culture_bps",
+            "type": "u64"
+          },
+          {
+            "name": "citizenship_threshold_bps",
+            "type": "u64"
+          },
+          {
+            "name": "milestone_deposit_bps",
+            "type": "u64"
+          },
+          {
+            "name": "spend_cooldown_secs",
+            "type": "i64"
+          },
+          {
+            "name": "exec_fallback_secs",
+            "type": "i64"
+          },
+          {
+            "name": "milestone_grace_secs",
+            "type": "i64"
+          },
+          {
+            "name": "last_spend_ts",
+            "type": "i64"
+          },
+          {
+            "name": "milestone_reserved",
+            "type": "u64"
+          },
+          {
+            "name": "treasury_snapshot_amount",
+            "type": "u64"
+          },
+          {
+            "name": "treasury_snapshot_day",
+            "type": "i64"
+          },
+          {
+            "name": "next_milestone_number",
+            "type": "u64"
+          },
+          {
+            "name": "proposal_count",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MilestoneRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "milestone_number",
+            "type": "u64"
+          },
+          {
+            "name": "payout_bps",
+            "type": "u64"
+          },
+          {
+            "name": "total_eligible_weight",
+            "type": "u128"
+          },
+          {
+            "name": "fund_snapshot_amount",
+            "type": "u64"
+          },
+          {
+            "name": "finalized",
+            "type": "bool"
+          },
+          {
+            "name": "finalized_at",
+            "type": "i64"
+          },
+          {
+            "name": "claimed_amount",
+            "type": "u64"
+          },
+          {
+            "name": "released",
+            "type": "bool"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MilestoneSnapshot",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "milestone_number",
+            "type": "u64"
+          },
+          {
+            "name": "holder",
+            "type": "pubkey"
+          },
+          {
+            "name": "weight",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PayrollClaim",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "role",
+            "type": "u8"
+          },
+          {
+            "name": "last_claim_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Proposal",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "proposal_type",
+            "docs": [
+              "0=Spend 1=ChangePresident 2=AppointFinance 3=AppointCulture",
+              "4=ChangeParam 5=ChangeOwnersAuthority 6=DepositToMilestoneFund"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "target",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "param_key",
+            "type": "u8"
+          },
+          {
+            "name": "reason",
+            "type": "string"
+          },
+          {
+            "name": "votes_for",
+            "type": "u64"
+          },
+          {
+            "name": "votes_against",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "deadline",
+            "type": "i64"
+          },
+          {
+            "name": "executed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SpendTracker",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "role",
+            "type": "u8"
+          },
+          {
+            "name": "daily_window_start",
+            "type": "i64"
+          },
+          {
+            "name": "daily_spent",
+            "type": "u64"
+          },
+          {
+            "name": "weekly_window_start",
+            "type": "i64"
+          },
+          {
+            "name": "weekly_spent",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VoterSnapshot",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "proposal",
+            "type": "pubkey"
+          },
+          {
+            "name": "voter",
+            "type": "pubkey"
+          },
+          {
+            "name": "weight",
+            "type": "u64"
+          },
+          {
+            "name": "consumed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

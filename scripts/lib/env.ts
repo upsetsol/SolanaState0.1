@@ -19,7 +19,8 @@ import {
 import * as fs from "fs";
 import * as os from "os";
 
-export const IDL_PATH = "./target/idl/onchain_state_solana.json";
+import { readIdl } from "./idl";
+export { readIdl, IDL_PATH } from "./idl";
 export const TOKEN_PROGRAM = TOKEN_2022_PROGRAM_ID;
 export const ATA_PROGRAM = ASSOCIATED_TOKEN_PROGRAM_ID;
 
@@ -27,13 +28,6 @@ function requireEnv(key: string): string {
   const v = process.env[key];
   if (!v) throw new Error(`Set ${key} (env var). No default on purpose.`);
   return v;
-}
-
-export function readIdl(): any {
-  if (!fs.existsSync(IDL_PATH)) {
-    throw new Error(`${IDL_PATH} not found — run \`anchor build\` first.`);
-  }
-  return JSON.parse(fs.readFileSync(IDL_PATH, "utf8"));
 }
 
 export const PROGRAM_ID = new PublicKey(

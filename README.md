@@ -9,6 +9,8 @@ transfer-fee), казна, голосование холдеров по веса
 > локальном валидаторе и на живом testnet), **не готово к мейннету**. Что остаётся закрыть —
 > [OPEN_ITEMS.md](OPEN_ITEMS.md) (аудит, финальные параметры, mint, authority-ключи).
 
+> **Хотите сами попробовать на testnet?** Пошаговая инструкция: [docs/OWNER_GUIDE.md](docs/OWNER_GUIDE.md).
+
 ## Стек
 
 - Solana + Anchor **1.1.2** (мейнлайн, под управлением Solana Foundation)

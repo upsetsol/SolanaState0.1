@@ -36,7 +36,14 @@ import * as os from "os";
 
 const RPC = process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com";
 const WALLET = (process.env.ANCHOR_WALLET || "~/.config/solana/id.json").replace("~", os.homedir());
-const IDL = JSON.parse(fs.readFileSync("./target/idl/onchain_state_solana.json", "utf8"));
+const IDL = JSON.parse(
+  fs.readFileSync(
+    fs.existsSync("./target/idl/onchain_state_solana.json")
+      ? "./target/idl/onchain_state_solana.json"
+      : "./idl/onchain_state_solana.json",
+    "utf8"
+  )
+);
 const PROGRAM_ID = new PublicKey(IDL.address);
 const TP = TOKEN_2022_PROGRAM_ID;
 const ATAP = ASSOCIATED_TOKEN_PROGRAM_ID;

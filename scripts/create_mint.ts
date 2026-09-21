@@ -35,7 +35,7 @@ import {
 } from "@solana/spl-token";
 import * as fs from "fs";
 import * as os from "os";
-import { readIdl } from "./lib/env";
+import { readIdl } from "./lib/idl";
 
 function loadKeypair(path: string): Keypair {
   const p = path.startsWith("~") ? path.replace("~", os.homedir()) : path;
