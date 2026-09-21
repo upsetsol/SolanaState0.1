@@ -21,3 +21,6 @@ id.json
 scripts/.multisig.json
 .wallet/
 .mint.json
+web/dist
+web/tests/*.png
+.claude/

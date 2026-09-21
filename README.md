@@ -10,6 +10,7 @@ transfer-fee), казна, голосование холдеров по веса
 > [OPEN_ITEMS.md](OPEN_ITEMS.md) (аудит, финальные параметры, mint, authority-ключи).
 
 > **Хотите сами попробовать на testnet?** Пошаговая инструкция: [docs/OWNER_GUIDE.md](docs/OWNER_GUIDE.md).
+> Есть готовый **веб-интерфейс** для тестирования всех функций контракта: [web/README.md](web/README.md).
 
 ## Стек
 
