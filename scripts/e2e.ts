@@ -68,6 +68,37 @@ async function expectOk(name: string, fn: () => Promise<any>) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Congested networks (public testnet) drop transactions: resend with a fresh blockhash
+// when one expires. Applies to every anchor `.rpc()` and to sendAndConfirmTransaction.
+const EXPIRED = /expired|block height exceeded|Blockhash not found|blockhash not found/i;
+const origSendAndConfirm = (anchor.AnchorProvider.prototype as any).sendAndConfirm;
+(anchor.AnchorProvider.prototype as any).sendAndConfirm = async function (this: any, ...args: any[]) {
+  for (let i = 0; ; i++) {
+    try {
+      return await origSendAndConfirm.apply(this, args);
+    } catch (e: any) {
+      if (i < 6 && EXPIRED.test(String(e?.message ?? e))) {
+        await sleep(1500);
+        continue;
+      }
+      throw e;
+    }
+  }
+};
+async function sendRetry(c: Connection, tx: Transaction, signers: Keypair[], opts: any) {
+  for (let i = 0; ; i++) {
+    try {
+      return await sendAndConfirmTransaction(c, tx, signers, opts);
+    } catch (e: any) {
+      if (i < 6 && EXPIRED.test(String(e?.message ?? e))) {
+        await sleep(1500);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
 // Flaky networks (public RPCs, sandboxes) reset connections: retry transport errors.
 async function retryFetch(input: any, init?: any): Promise<any> {
   let last: any;
@@ -121,7 +152,7 @@ async function main() {
   const mintRent = await conn.getMinimumBalanceForRentExemption(mintLen);
   const myAta = getAssociatedTokenAddressSync(mint.publicKey, me, false, TP, ATAP);
   const SUPPLY = 1_000_000_000n * 10n ** BigInt(DEC);
-  await sendAndConfirmTransaction(
+  await sendRetry(
     conn,
     new Transaction().add(
       SystemProgram.createAccount({
@@ -253,7 +284,7 @@ async function main() {
     const tx = new Transaction();
     for (const h of holders)
       tx.add(SystemProgram.transfer({ fromPubkey: me, toPubkey: h.publicKey, lamports: 0.02 * LAMPORTS_PER_SOL }));
-    await sendAndConfirmTransaction(conn, tx, [payer], { commitment: "confirmed" });
+    await sendRetry(conn, tx, [payer], { commitment: "confirmed" });
   }
   for (let i = 0; i < holders.length; i++) {
     const h = holders[i];
@@ -272,7 +303,7 @@ async function main() {
         TP
       )
     );
-    await sendAndConfirmTransaction(conn, tx, [payer], { commitment: "confirmed" });
+    await sendRetry(conn, tx, [payer], { commitment: "confirmed" });
     console.log(`  holder ${labels[i]} ${h.publicKey.toBase58()} balance ${await bal(hAta)}`);
   }
   record("distribute tokens to 3 holders (tax applied on transfer)", true);
@@ -345,7 +376,7 @@ async function main() {
   {
     // Treasury only fills from tax/harvest. Seed it with a taxed transfer.
     const seed = 100_000_000n * 10n ** BigInt(DEC);
-    await sendAndConfirmTransaction(
+    await sendRetry(
       conn,
       new Transaction().add(
         createTransferCheckedWithFeeInstruction(
