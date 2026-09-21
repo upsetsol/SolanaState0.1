@@ -191,7 +191,8 @@ async function main() {
   const VOTE = 14,
     TL = 7,
     COOL = 10,
-    FB = 6;
+    FB = 6,
+    GRACE = 8;
   await expectOk("initialize", () =>
     program.methods
       .initialize(
@@ -214,7 +215,8 @@ async function main() {
         new anchor.BN(25), // citizenship 0.25%
         new anchor.BN(1000), // milestone deposit 10%
         new anchor.BN(COOL),
-        new anchor.BN(FB)
+        new anchor.BN(FB),
+        new anchor.BN(GRACE)
       )
       .accounts({
         owner: me,
@@ -706,6 +708,85 @@ async function main() {
           claimantTokenAccount: ata(holders[0].publicKey),
           tokenProgram: TP,
         })
+        .rpc()
+    );
+  }
+
+  // ===== milestone 2: unclaimed share returns to the fund =====
+  {
+    const n2 = (await program.account.config.fetch(configPda)).nextMilestoneNumber;
+    const m2 = milestonePda(n2);
+    const claimAccts = (h: PublicKey) => ({
+      payer: me,
+      governanceMint: mint.publicKey,
+      config: configPda,
+      milestoneRecord: m2,
+      milestoneSnapshot: mSnapPda(m2, h),
+      milestoneFund: milestoneFundPda,
+      claimantTokenAccount: ata(h),
+      tokenProgram: TP,
+    });
+    await expectOk("milestone 2: create", () =>
+      program.methods
+        .createMilestone()
+        .accounts({
+          owner: me,
+          governanceMint: mint.publicKey,
+          config: configPda,
+          milestoneRecord: m2,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+    );
+    for (const h of [holders[0], holders[1]]) {
+      await program.methods
+        .postMilestoneSnapshot(new anchor.BN(n2.toString()), h.publicKey)
+        .accounts({
+          owner: me,
+          governanceMint: mint.publicKey,
+          config: configPda,
+          milestoneRecord: m2,
+          holderTokenAccount: ata(h.publicKey),
+          milestoneSnapshot: mSnapPda(m2, h.publicKey),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
+    await expectOk("milestone 2: finalize (base excludes milestone 1 reserve)", () =>
+      program.methods
+        .finalizeMilestone(new anchor.BN(n2.toString()))
+        .accounts({
+          owner: me,
+          governanceMint: mint.publicKey,
+          config: configPda,
+          milestoneRecord: m2,
+          previousMilestone: milestonePda(new anchor.BN(n2.toString()).subn(1)),
+          milestoneFund: milestoneFundPda,
+          tokenProgram: TP,
+        })
+        .rpc()
+    );
+    await expectOk("milestone 2: pay holder A only", () =>
+      program.methods
+        .claimMilestone(new anchor.BN(n2.toString()), holders[0].publicKey)
+        .accounts(claimAccts(holders[0].publicKey))
+        .rpc()
+    );
+    const relAccts = { owner: me, governanceMint: mint.publicKey, config: configPda, milestoneRecord: m2 };
+    await expectErr("release before grace period → MilestoneGraceNotElapsed", "MilestoneGraceNotElapsed", () =>
+      program.methods.releaseMilestoneReserve(new anchor.BN(n2.toString())).accounts(relAccts).rpc()
+    );
+    const reservedBefore = (await program.account.config.fetch(configPda)).milestoneReserved;
+    await waitChain((await chainNow()) + GRACE + 2);
+    await expectOk("release after grace: unclaimed share returns to the fund", () =>
+      program.methods.releaseMilestoneReserve(new anchor.BN(n2.toString())).accounts(relAccts).rpc()
+    );
+    const reservedAfter = (await program.account.config.fetch(configPda)).milestoneReserved;
+    record("reserve shrank by B's unclaimed share", reservedAfter.lt(reservedBefore), `${reservedBefore} → ${reservedAfter}`);
+    await expectErr("claim on closed milestone → MilestoneClosed", "MilestoneClosed", () =>
+      program.methods
+        .claimMilestone(new anchor.BN(n2.toString()), holders[1].publicKey)
+        .accounts(claimAccts(holders[1].publicKey))
         .rpc()
     );
   }

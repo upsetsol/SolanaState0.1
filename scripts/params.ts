@@ -20,6 +20,7 @@ export type GovernanceParams = {
   milestoneDepositBps: number;
   spendCooldownSecs: number;
   execFallbackSecs: number;
+  milestoneGraceSecs: number;
 };
 
 /** Short windows so a test cycle fits in one sitting. Not for mainnet. */
@@ -41,6 +42,7 @@ export const TEST_PARAMS: GovernanceParams = {
   milestoneDepositBps: 1000, // ≤10% of treasury per governance-approved deposit
   spendCooldownSecs: 120, // min gap between executed SPEND / milestone-deposit proposals
   execFallbackSecs: 3_600, // president may execute if owners don't, after this long
+  milestoneGraceSecs: 300, // after this, unclaimed milestone shares can return to the fund
 };
 
 /** Conservative production defaults. Tune before a real launch. */
@@ -62,6 +64,7 @@ export const PROD_PARAMS: GovernanceParams = {
   milestoneDepositBps: 500, // ≤5% of treasury per governance-approved deposit
   spendCooldownSecs: 86_400, // one money-moving proposal per day
   execFallbackSecs: 86_400, // president executes if owners are silent for a day
+  milestoneGraceSecs: 2_592_000, // 30 days to collect a milestone payout
 };
 
 export function isMainnetRpc(url: string): boolean {

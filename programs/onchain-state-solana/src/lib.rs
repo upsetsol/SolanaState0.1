@@ -34,6 +34,8 @@ declare_id!("FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy");
 //    and only up to milestone_deposit_bps of the treasury.
 //  * If owners_authority doesn't execute a passed proposal, the president can
 //    after exec_fallback_secs (default 1 day) past the timelock.
+//  * release_milestone_reserve: after a grace period the unclaimed part of a
+//    milestone returns to the fund and the milestone is closed.
 //  * Money-moving proposals (SPEND, milestone deposit) can only be EXECUTED
 //    once per spend_cooldown_secs — you can't run several 30% spends
 //    back-to-back to drain the treasury.
@@ -115,6 +117,11 @@ pub fn payout_bps_for(n: u64) -> u64 {
 /// The pool a milestone pays out: base * payout_bps / 10000.
 pub fn milestone_pool(base: u64, payout_bps: u64) -> u128 {
     (base as u128) * (payout_bps as u128) / BPS_DENOM as u128
+}
+
+/// Part of a milestone pool nobody claimed — goes back to the fund on release.
+pub fn milestone_unclaimed(pool: u128, claimed: u64) -> u64 {
+    pool.saturating_sub(claimed as u128) as u64
 }
 
 /// One citizen's share of a milestone pool, by weight.
@@ -220,6 +227,7 @@ pub mod onchain_state_solana {
         milestone_deposit_bps: u64,
         spend_cooldown_secs: i64,
         exec_fallback_secs: i64,
+        milestone_grace_secs: i64,
     ) -> Result<()> {
         require!(owners_authority != Pubkey::default(), GovError::ZeroAddress);
         require!(admin_authority != Pubkey::default(), GovError::ZeroAddress);
@@ -228,6 +236,7 @@ pub mod onchain_state_solana {
         require!(timelock_secs >= 0, GovError::InvalidBps);
         require!(spend_cooldown_secs >= 0, GovError::InvalidBps);
         require!(exec_fallback_secs > 0, GovError::InvalidBps);
+        require!(milestone_grace_secs >= 0, GovError::InvalidBps);
         require!(citizenship_threshold_bps <= BPS_DENOM, GovError::InvalidBps);
         require!(milestone_deposit_bps <= BPS_DENOM, GovError::InvalidBps);
 
@@ -258,6 +267,7 @@ pub mod onchain_state_solana {
         config.spend_cooldown_secs = spend_cooldown_secs;
         config.last_spend_ts = 0;
         config.exec_fallback_secs = exec_fallback_secs;
+        config.milestone_grace_secs = milestone_grace_secs;
         config.milestone_reserved = 0;
         config.treasury_snapshot_amount = 0;
         // Sentinel: 0 is never a real day index, so the first claim_salary /
@@ -821,6 +831,9 @@ pub mod onchain_state_solana {
         record.total_eligible_weight = 0;
         record.fund_snapshot_amount = 0;
         record.finalized = false;
+        record.finalized_at = 0;
+        record.claimed_amount = 0;
+        record.released = false;
         record.created_at = Clock::get()?.unix_timestamp;
         record.bump = ctx.bumps.milestone_record;
 
@@ -896,6 +909,7 @@ pub mod onchain_state_solana {
         let pool = milestone_pool(available, ctx.accounts.milestone_record.payout_bps);
 
         ctx.accounts.milestone_record.finalized = true;
+        ctx.accounts.milestone_record.finalized_at = Clock::get()?.unix_timestamp;
         ctx.accounts.milestone_record.fund_snapshot_amount = available;
         ctx.accounts.config.milestone_reserved = ctx
             .accounts
@@ -903,6 +917,36 @@ pub mod onchain_state_solana {
             .milestone_reserved
             .checked_add(pool as u64)
             .unwrap();
+        Ok(())
+    }
+
+    /// Closes a milestone after the claim grace period: whatever was promised
+    /// but not paid out returns to the fund's free balance (the reserve is
+    /// released), so the next milestone can use it. Claims on a closed
+    /// milestone are no longer possible. owners_authority only.
+    pub fn release_milestone_reserve(
+        ctx: Context<ReleaseMilestone>,
+        _milestone_number: u64,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.owner.key(),
+            ctx.accounts.config.owners_authority,
+            GovError::NotOwner
+        );
+        let rec = &ctx.accounts.milestone_record;
+        require!(rec.finalized, GovError::MilestoneNotFinalized);
+        require!(!rec.released, GovError::MilestoneClosed);
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            now >= rec.finalized_at.saturating_add(ctx.accounts.config.milestone_grace_secs),
+            GovError::MilestoneGraceNotElapsed
+        );
+
+        let pool = milestone_pool(rec.fund_snapshot_amount, rec.payout_bps);
+        let unclaimed = milestone_unclaimed(pool, rec.claimed_amount);
+        ctx.accounts.config.milestone_reserved =
+            ctx.accounts.config.milestone_reserved.saturating_sub(unclaimed);
+        ctx.accounts.milestone_record.released = true;
         Ok(())
     }
 
@@ -917,6 +961,7 @@ pub mod onchain_state_solana {
     ) -> Result<()> {
         require!(!ctx.accounts.config.paused, GovError::Paused);
         require!(ctx.accounts.milestone_record.finalized, GovError::MilestoneNotFinalized);
+        require!(!ctx.accounts.milestone_record.released, GovError::MilestoneClosed);
         require!(!ctx.accounts.milestone_snapshot.claimed, GovError::AlreadyClaimedMilestone);
 
         let pool = milestone_pool(
@@ -931,6 +976,12 @@ pub mod onchain_state_solana {
         require!(share > 0, GovError::NothingToClaim);
 
         ctx.accounts.milestone_snapshot.claimed = true;
+        ctx.accounts.milestone_record.claimed_amount = ctx
+            .accounts
+            .milestone_record
+            .claimed_amount
+            .checked_add(share)
+            .unwrap();
         ctx.accounts.config.milestone_reserved =
             ctx.accounts.config.milestone_reserved.saturating_sub(share);
 
@@ -1327,6 +1378,24 @@ pub struct FinalizeMilestone<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(milestone_number: u64)]
+pub struct ReleaseMilestone<'info> {
+    pub owner: Signer<'info>,
+
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(
+        mut,
+        seeds = [b"milestone", config.key().as_ref(), &milestone_number.to_le_bytes()],
+        bump = milestone_record.bump
+    )]
+    pub milestone_record: Box<Account<'info, MilestoneRecord>>,
+}
+
+#[derive(Accounts)]
 #[instruction(milestone_number: u64, holder: Pubkey)]
 pub struct ClaimMilestone<'info> {
     /// Whoever submits + pays the tx fee (on practice: owners). The citizen
@@ -1339,7 +1408,7 @@ pub struct ClaimMilestone<'info> {
     #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
 
-    #[account(seeds = [b"milestone", config.key().as_ref(), &milestone_number.to_le_bytes()], bump = milestone_record.bump)]
+    #[account(mut, seeds = [b"milestone", config.key().as_ref(), &milestone_number.to_le_bytes()], bump = milestone_record.bump)]
     pub milestone_record: Box<Account<'info, MilestoneRecord>>,
 
     #[account(
@@ -1396,6 +1465,7 @@ pub struct Config {
     pub milestone_deposit_bps: u64,
     pub spend_cooldown_secs: i64,
     pub exec_fallback_secs: i64,
+    pub milestone_grace_secs: i64,
     pub last_spend_ts: i64,
     pub milestone_reserved: u64,
     pub treasury_snapshot_amount: u64,
@@ -1464,6 +1534,9 @@ pub struct MilestoneRecord {
     pub total_eligible_weight: u128,
     pub fund_snapshot_amount: u64,
     pub finalized: bool,
+    pub finalized_at: i64,
+    pub claimed_amount: u64,
+    pub released: bool,
     pub created_at: i64,
     pub bump: u8,
 }
@@ -1562,6 +1635,10 @@ pub enum GovError {
     PreviousMilestoneNotFinalized,
     #[msg("Milestone reward already claimed")]
     AlreadyClaimedMilestone,
+    #[msg("Milestone is closed (unclaimed part already returned to the fund)")]
+    MilestoneClosed,
+    #[msg("Claim grace period has not elapsed yet")]
+    MilestoneGraceNotElapsed,
 }
 
 /// Milestone N>1 may be finalized only after milestone N-1 is finalized.
@@ -1592,6 +1669,9 @@ mod p0_tests {
             total_eligible_weight: 1,
             fund_snapshot_amount: 0,
             finalized,
+            finalized_at: 0,
+            claimed_amount: 0,
+            released: false,
             created_at: 0,
             bump: 0,
         }
@@ -1686,6 +1766,14 @@ mod p0_tests {
     }
 
     #[test]
+    fn unclaimed_returns_to_fund() {
+        let pool = milestone_pool(1_000, 3_000); // 300
+        assert_eq!(milestone_unclaimed(pool, 225), 75);
+        assert_eq!(milestone_unclaimed(pool, 300), 0);
+        assert_eq!(milestone_unclaimed(pool, 999), 0); // never underflows
+    }
+
+    #[test]
     fn milestone_reserve_prevents_double_promise() {
         // fund has 1000, milestone 1 reserves 30% = 300
         let reserved_after_1: u64 = milestone_pool(1_000, payout_bps_for(1)) as u64;
@@ -1760,6 +1848,7 @@ mod p0_tests {
             milestone_deposit_bps: 0,
             spend_cooldown_secs: 0,
             exec_fallback_secs: 0,
+            milestone_grace_secs: 0,
             last_spend_ts: 0,
             milestone_reserved: 0,
             treasury_snapshot_amount: 0,

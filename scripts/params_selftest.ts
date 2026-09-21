@@ -15,6 +15,7 @@ if (r.params.citizenshipThresholdBps !== 25) fail("citizenship threshold should 
 if (r.params.milestoneDepositBps !== 1000) fail("test milestone deposit cap should be 10%");
 if (r.params.spendCooldownSecs !== 120) fail("test spend cooldown");
 if (r.params.execFallbackSecs !== 3_600) fail("test exec fallback");
+if (r.params.milestoneGraceSecs !== 300) fail("test milestone grace");
 
 process.env.PARAMS = "prod";
 r = resolveParams();
@@ -23,6 +24,7 @@ if (r.params.votingPeriodSecs !== 86_400) fail("prod voting period");
 if (r.params.milestoneDepositBps !== 500) fail("prod milestone deposit cap should be 5%");
 if (r.params.spendCooldownSecs !== 86_400) fail("prod spend cooldown should be 1 day");
 if (r.params.execFallbackSecs !== 86_400) fail("prod exec fallback should be 1 day");
+if (r.params.milestoneGraceSecs !== 2_592_000) fail("prod milestone grace should be 30 days");
 
 process.env.ANCHOR_PROVIDER_URL = "https://api.mainnet-beta.solana.com";
 delete process.env.PARAMS;
