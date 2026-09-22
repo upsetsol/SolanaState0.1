@@ -116,6 +116,53 @@ export type Pdas = ReturnType<typeof pdas>;
 
 const ERRORS: { code: number; name: string; msg: string }[] = IDL.errors ?? [];
 
+// Infrastructure-level failures (wallet/RPC/network) — happen before the contract
+// ever runs, so there's no program error code to look up. Matched by a snippet of
+// the raw message; explained in plain Russian, with the raw text kept for debugging.
+const INFRA_ERRORS: [RegExp, string][] = [
+  [
+    /Attempt to debit an account but found no record of a prior credit/i,
+    "На этом кошельке нет SOL в выбранной сети (он ни разу не получал SOL здесь). Возьмите тестовые SOL на faucet.solana.com (выбрать нужную сеть) и повторите.",
+  ],
+  [
+    /insufficient funds/i,
+    "Недостаточно SOL на кошельке для этой операции (комиссия/аренда счёта). Пополните через faucet.solana.com.",
+  ],
+  [
+    /User rejected the request|user rejected|Approval Denied/i,
+    "Подпись отклонена в кошельке (нажали «Отмена» или закрыли окно). Повторите и подтвердите транзакцию.",
+  ],
+  [
+    /block height exceeded|Transaction was not confirmed|blockhash not found/i,
+    "Сеть не успела подтвердить транзакцию вовремя (testnet перегружен). Просто повторите действие.",
+  ],
+  [
+    /Attempt to load a program that does not exist|Program .* does not exist/i,
+    "Программа не найдена в этой сети. Проверьте Program ID и выбранную сеть на вкладке «Настройка».",
+  ],
+  [
+    /AccountNotFound|could not find account|Account does not exist/i,
+    "Нужный счёт не найден в блокчейне. Проверьте, что токен создан и государство инициализировано (вкладка «Настройка»), и что вставлен правильный адрес.",
+  ],
+  [
+    /WalletNotConnectedError|wallet not connected|No wallet/i,
+    "Кошелёк не подключён или не выбран активным (список кошельков в шапке справа).",
+  ],
+  [
+    /429|Too many requests|rate limit/i,
+    "RPC ограничил частоту запросов. Подождите немного и повторите.",
+  ],
+  [
+    /Failed to fetch|NetworkError|ECONNRESET|network error/i,
+    "Сеть/RPC сейчас не отвечает. Подождите немного и повторите.",
+  ],
+];
+
+function humanizeInfraError(text: string): string | null {
+  for (const [re, ru] of INFRA_ERRORS) if (re.test(text)) return ru;
+  return null;
+}
+
 export function describeError(e: any): string {
   const ec = e?.error?.errorCode;
   if (ec?.code) return `${ec.code}: ${e.error.errorMessage ?? ""}`.trim();
@@ -129,6 +176,8 @@ export function describeError(e: any): string {
   const logs: string[] | undefined = e?.logs ?? e?.transactionLogs;
   const anchorLine = logs?.find((l) => l.includes("Error Code:"));
   if (anchorLine) return anchorLine.replace(/^.*Error Code:\s*/, "");
+  const infra = humanizeInfraError(text);
+  if (infra) return `${infra} (${text.length > 140 ? text.slice(0, 140) + "…" : text})`;
   return text.length > 300 ? text.slice(0, 300) + "…" : text;
 }
 
