@@ -48,6 +48,10 @@ npm run dev &
 npm run test:ui       # нужен установленный Google Chrome
 ```
 
+`tests/external-wallet.mjs` (`npm run test:wallet`) проверяет путь внешнего кошелька вроде Phantom на
+поддельном кошельке: сайт обязан передать кошельку сеть, иначе Phantom симулирует транзакцию в другой
+сети и показывает ложные красные предупреждения («not enough SOL», «failed to simulate»).
+
 ## Описание контракта (IDL)
 
 Берётся из `../idl/onchain_state_solana.json`. После изменения программы:

@@ -122,6 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         publicKey: w.publicKey!,
         signTransaction: (tx: any) => w.signTransaction!(tx),
         signAllTransactions: (txs: any[]) => w.signAllTransactions!(txs),
+        sendViaWallet: (tx: any, conn: Connection, options?: any) => w.sendTransaction(tx, conn, options),
       });
     }
     return list;

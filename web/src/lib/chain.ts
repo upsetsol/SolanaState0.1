@@ -26,6 +26,13 @@ export interface AppSigner {
   publicKey: PublicKey;
   signTransaction<T extends Transaction | VersionedTransaction>(tx: T): Promise<T>;
   signAllTransactions<T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]>;
+  /**
+   * External wallets only. Sends through the wallet adapter's sendTransaction, which tells the
+   * wallet WHICH network the transaction is for (derived from the RPC URL). Plain signTransaction
+   * passes no network, so Phantom simulates on its own default network and shows false red
+   * warnings ("not enough SOL", "failed to simulate") even when the wallet is funded on testnet.
+   */
+  sendViaWallet?: (tx: Transaction, connection: Connection, options?: any) => Promise<string>;
 }
 
 export function burnerSigner(id: string, label: string, kp: Keypair): AppSigner {
@@ -53,12 +60,42 @@ const EXPIRED = /expired|block height exceeded|blockhash not found/i;
 
 /** AnchorProvider that re-sends when a blockhash expires (congested public RPCs). */
 export class RetryProvider extends anchor.AnchorProvider {
+  private async sendViaExternalWallet(tx: Transaction, signers: any[] | undefined, opts: any): Promise<string> {
+    const w: any = this.wallet;
+    const conn = this.connection;
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = w.publicKey;
+    let sig: string;
+    try {
+      sig = await w.sendViaWallet(tx, conn, {
+        signers: signers?.length ? signers : undefined,
+        skipPreflight: opts?.skipPreflight,
+        preflightCommitment: "confirmed",
+      });
+    } catch (e: any) {
+      // The adapter throws an empty WalletSendTransactionError when the wallet account does not
+      // list this network (e.g. Phantom is not in Testnet Mode).
+      if (e?.name === "WalletSendTransactionError" && !e?.message) {
+        throw new Error(
+          "Кошелёк не работает с выбранной сетью. В Phantom включите Testnet Mode (Настройки → Developer Settings) и выберите Solana Testnet, затем повторите."
+        );
+      }
+      throw e;
+    }
+    const res = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    if (res.value.err) throw new Error(JSON.stringify(res.value.err));
+    return sig;
+  }
+
   async sendAndConfirm(tx: any, signers?: any[], opts?: any): Promise<string> {
+    const external = (this.wallet as any)?.sendViaWallet && tx instanceof Transaction;
     for (let i = 0; ; i++) {
       try {
+        if (external) return await this.sendViaExternalWallet(tx, signers, opts);
         return await super.sendAndConfirm(tx, signers, opts);
       } catch (e: any) {
-        if (i < 5 && EXPIRED.test(String(e?.message ?? e))) {
+        if (i < (external ? 1 : 5) && EXPIRED.test(String(e?.message ?? e))) {
           await new Promise((r) => setTimeout(r, 1200));
           continue;
         }
@@ -166,7 +203,7 @@ function humanizeInfraError(text: string): string | null {
 export function describeError(e: any): string {
   const ec = e?.error?.errorCode;
   if (ec?.code) return `${ec.code}: ${e.error.errorMessage ?? ""}`.trim();
-  const text = String(e?.message ?? e);
+  const text = String(e?.message || e?.name || e);
   const m = text.match(/"Custom":\s*(\d+)/) || text.match(/custom program error: 0x([0-9a-f]+)/i);
   if (m) {
     const code = text.includes("0x") && !text.includes("Custom") ? parseInt(m[1], 16) : Number(m[1]);
