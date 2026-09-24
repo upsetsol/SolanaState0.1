@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useApp } from "./lib/ctx";
 import { explorerTx, short } from "./lib/chain";
+import { MIN_SOL_LAMPORTS } from "./lib/ctx";
+import { Copy, Note } from "./lib/ui";
 import Setup from "./pages/Setup";
 import Overview from "./pages/Overview";
 import Proposals from "./pages/Proposals";
@@ -44,6 +46,16 @@ export default function App() {
         ))}
       </nav>
       <main>
+        {active && data.mySol !== null && data.mySol * 1e9 < MIN_SOL_LAMPORTS && (
+          <Note kind="warn">
+            На активном кошельке <Copy text={active.publicKey.toBase58()}>{short(active.publicKey)}</Copy> почти нет SOL ({data.mySol.toFixed(4)}) в этой сети.
+            Без SOL действия не пройдут, а Phantom покажет красные предупреждения. Получите тестовые SOL:
+            {settings.rpc.includes("127.0.0.1") || settings.rpc.includes("localhost")
+              ? " кнопка «Airdrop» на вкладке «Настройка»."
+              : <> <a href="https://faucet.solana.com" target="_blank" rel="noreferrer">faucet.solana.com</a> ({settings.rpc.includes("devnet") ? "Devnet" : "Testnet"}, вставьте адрес; клик по адресу выше копирует его).</>}
+            {active.kind === "phantom" && " В Phantom должен быть включён Testnet Mode (Настройки → Developer Settings)."}
+          </Note>
+        )}
         {!data.loaded && <p className="muted">Загрузка данных из сети…</p>}
         <Page />
       </main>

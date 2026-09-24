@@ -46,6 +46,8 @@ const EMPTY: ChainData = {
 // Token-2022 reports a removed authority as the all-zero address: show it as "none".
 const nz = (k?: PublicKey | null) => (k && !k.equals(PublicKey.default) ? k.toBase58() : null);
 
+export const MIN_SOL_LAMPORTS = 10_000_000; // 0.01 SOL: covers the most expensive step (token + accounts)
+
 export interface Holder { owner: PublicKey; account: PublicKey; amount: bigint }
 
 interface Ctx {
@@ -204,6 +206,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const who = active?.label ?? "—";
     setLog((l) => [{ n, time: Date.now(), label, who, status: "pending" as const }, ...l].slice(0, 200));
     try {
+      // An external wallet with no SOL makes Phantom show scary red warnings
+      // ("not enough SOL", "failed to simulate"). Stop early with a clear explanation instead.
+      if (active?.kind === "phantom") {
+        let lam: number | null = null;
+        try { lam = await connection.getBalance(active.publicKey, "confirmed"); } catch { /* RPC hiccup: let the wallet decide */ }
+        if (lam !== null && lam < MIN_SOL_LAMPORTS) {
+          throw new Error(`На кошельке ${(lam / 1e9).toFixed(4)} SOL: для транзакции этого мало (нужно хотя бы ${MIN_SOL_LAMPORTS / 1e9}). Получите тестовые SOL на faucet.solana.com (нужная сеть) и повторите: тогда Phantom не покажет красных предупреждений.`);
+        }
+      }
       const sig = (await fn()) || undefined;
       setLog((l) => l.map((e) => (e.n === n ? { ...e, status: "ok" as const, sig } : e)));
       setTimeout(refresh, 600);
