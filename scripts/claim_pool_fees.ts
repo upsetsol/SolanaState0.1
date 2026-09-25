@@ -6,7 +6,7 @@
 
 import {
   getProvider, loadProgram, GOVERNANCE_MINT, TREASURY_MINT, TOKEN_PROGRAM, TREASURY_PROGRAM, METEORA_CP_AMM,
-  METEORA_POOL_AUTHORITY, METEORA_EVENT_AUTHORITY, configPda, treasuryAta, feeAAccount, readPoolVaults,
+  METEORA_POOL_AUTHORITY, METEORA_EVENT_AUTHORITY, configPda, treasuryAta, feeAAccount, readPoolVaults, readPendingPoolFee,
 } from "./lib/env";
 import { getAccount } from "@solana/spl-token";
 
@@ -16,6 +16,8 @@ async function main() {
   const cfg = await program.account.config.fetch(configPda());
   const { vaultA, vaultB } = await readPoolVaults(provider.connection, cfg.feePool);
 
+  const pending = await readPendingPoolFee(provider.connection, cfg.feePool, cfg.feePosition);
+  console.log("pending fee on the position (raw units of the treasury asset):", pending.feeB.toString());
   const before = (await getAccount(provider.connection, treasuryAta(), "confirmed", TREASURY_PROGRAM)).amount;
   const tx = await program.methods
     .claimPoolFees()

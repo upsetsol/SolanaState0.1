@@ -140,6 +140,41 @@ export async function readPoolVaults(connection: Connection, pool: PublicKey): P
   return { vaultA: new PublicKey(info.data.subarray(232, 264)), vaultB: new PublicKey(info.data.subarray(264, 296)) };
 }
 
+function u256le(data: Uint8Array, offset: number): bigint {
+  let v = 0n;
+  for (let i = 31; i >= 0; i--) v = (v << 8n) | BigInt(data[offset + i]);
+  return v;
+}
+function u128le(data: Uint8Array, offset: number): bigint {
+  let v = 0n;
+  for (let i = 15; i >= 0; i--) v = (v << 8n) | BigInt(data[offset + i]);
+  return v;
+}
+function u64le2(data: Uint8Array, offset: number): bigint {
+  let v = 0n;
+  for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(data[offset + i]);
+  return v;
+}
+
+/**
+ * Trading fee that has accrued on the state's pool position but is not claimed yet, computed from the raw
+ * cp-amm accounts (same formula as Meteora: pending + (fee-per-liquidity now - checkpoint) * liquidity / 2^128).
+ * Offsets include the 8-byte discriminator. feeA is always 0 in "fee only in B" pools.
+ */
+export async function readPendingPoolFee(
+  connection: Connection,
+  pool: PublicKey,
+  position: PublicKey
+): Promise<{ feeA: bigint; feeB: bigint }> {
+  const [pi, xi] = await Promise.all([connection.getAccountInfo(pool, "confirmed"), connection.getAccountInfo(position, "confirmed")]);
+  if (!pi || !xi) throw new Error("pool or position account not found");
+  const pd = pi.data, xd = xi.data;
+  const liquidity = u128le(xd, 152) + u128le(xd, 168) + u128le(xd, 184); // unlocked + vested + permanently locked
+  const feeA = u64le2(xd, 136) + (((u256le(pd, 488) - u256le(xd, 72)) * liquidity) >> 128n);
+  const feeB = u64le2(xd, 144) + (((u256le(pd, 520) - u256le(xd, 104)) * liquidity) >> 128n);
+  return { feeA, feeB };
+}
+
 export function milestoneFundPda(): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("milestone_fund"), configPda().toBuffer()],

@@ -79,31 +79,40 @@ npm run dev        # откройте http://127.0.0.1:5173
 ```bash
 npx ts-node scripts/e2e.ts
 ```
-Скрипт сам создаёт токен, инициализирует государство, раздаёт токены трём тестовым холдерам и
-прогоняет **все** сценарии (голосование, зарплаты, лимиты, вехи, пауза…), печатая ✅/❌ по каждому.
-Идёт 10–15 минут (там есть ожидания). В конце должно быть `53/53 PASS`. Тратит около 1 SOL.
+Скрипт сам создаёт монету государства, инициализирует государство (казна в wSOL), раздаёт монеты трём тестовым
+холдерам и прогоняет **все** сценарии (голосование, зарплаты, лимиты, вехи, пауза, пул Meteora и сбор комиссии в казну…),
+печатая ✅/❌ по каждому. Идёт 10–15 минут (там есть ожидания). Часть про пул выполняется, только если на сети есть
+программа Meteora (devnet; на testnet её может не быть, тогда шаг пропускается). Тратит около 1 SOL.
 Лучший способ понять, что вообще умеет контракт.
 
 ## 5. Своё государство по шагам (руками)
 
 ```bash
-# 1. Свой токен: 5% налог на переводы, налог менять нельзя, 1 млрд монет на ваш кошелёк
-INITIAL_SUPPLY=1000000000 npx ts-node scripts/create_mint.ts
+# 1. Своя монета государства: Token-2022 с названием и символом, БЕЗ налога, 1 млрд монет на ваш кошелёк
+NAME="Test 1" SYMBOL=TEST1 INITIAL_SUPPLY=1000000000 npx ts-node scripts/create_mint.ts
 export GOVERNANCE_MINT=<адрес токена из вывода>
+# Актив казны по умолчанию wSOL (обёрнутый SOL). Для USDC/USDT: export TREASURY_MINT=<mint>
 
 # 2. Инициализация: вы и owner, и admin, и первый президент (PARAMS=test = короткие сроки)
 ME=$(solana address)
 OWNERS_AUTHORITY=$ME ADMIN_AUTHORITY=$ME PRESIDENT=$ME PARAMS=test npx ts-node scripts/initialize.ts
 
-# 3. Стартовая казна: 5% монет переводятся в казну
-npx ts-node scripts/fund_treasury.ts
-
-# 4. Фонд вех (для наград гражданам)
+# 3. Фонд вех (для наград гражданам)
 npx ts-node scripts/setup_milestone_fund.ts
 
-# 5. Посмотреть состояние
+# 4. Пул Meteora: 5% комиссия с каждой покупки и продажи, только в SOL; ликвидность блокируется навсегда,
+#    позиция передаётся государству (нужен devnet: на testnet Meteora может отсутствовать)
+TOKEN_AMOUNT=100000000 QUOTE_AMOUNT=1 npx ts-node scripts/create_pool.ts
+npx ts-node scripts/register_pool.ts
+
+# 5. Торговля (можно с другого кошелька: KEYPAIR=~/trader.json) и сбор комиссии в казну (может вызвать любой)
+SIDE=buy AMOUNT=0.1 npx ts-node scripts/pool_swap.ts
+npx ts-node scripts/claim_pool_fees.ts
+
+# 6. Посмотреть состояние
 npx ts-node scripts/inspect.ts
 ```
+Для теста голосования без пула казну можно наполнить вручную: `AMOUNT=1 npx ts-node scripts/fund_treasury.ts` (1 SOL заворачивается в wSOL на счёт казны).
 Сроки в режиме `test`: голосование 5 минут, ожидание перед исполнением 1 минута, пауза между тратами
 2 минуты. Боевые значения (`PARAMS=prod`) в `scripts/params.ts`.
 
@@ -116,16 +125,19 @@ npx ts-node scripts/execute_proposal.ts 0 --spend
 ```
 (`0` — номер предложения, вывод первой команды покажет номер.)
 
-Чтобы голосовали другие люди, им нужны токены: перевести с вашего кошелька (`spl-token` или свой скрипт),
+Чтобы голосовали другие люди, им нужны монеты государства: перевести с вашего кошелька (`spl-token` или свой скрипт),
 после чего вы вносите их снимок командой `postSnapshot` (в `scripts/lib/env.ts`) **до первого голоса**.
 
 ## 6. Что за что отвечает
 
 | Действие | Кто | Скрипт |
 |---|---|---|
-| Создать токен | любой | `create_mint.ts` |
+| Создать монету государства | любой | `create_mint.ts` |
 | Создать государство | кто платит; получает роли из параметров | `initialize.ts` |
-| Пополнить казну на 5% | эмитент | `fund_treasury.ts` |
+| Положить актив в казну (тест) | любой | `fund_treasury.ts` |
+| Создать пул Meteora и передать позицию государству | эмитент | `create_pool.ts` |
+| Привязать пул к государству (один раз) | owner | `register_pool.ts` |
+| Купить / продать в пуле (тест) | любой | `pool_swap.ts` |
 | Создать фонд вех | owner | `setup_milestone_fund.ts` |
 | Состояние | любой | `inspect.ts` |
 | Создать предложение + голос | холдер (снимок постит owner) | `propose_and_vote.ts`, `change_param.ts`, `appoint_minister.ts`, `appoint_culture_minister.ts`, `change_president.ts`, `change_owners_authority.ts` |
@@ -133,7 +145,7 @@ npx ts-node scripts/execute_proposal.ts 0 --spend
 | Исполнить решение | owner (президент — через сутки, если owner молчит) | `execute_proposal.ts` |
 | Зарплата | президент/министры | `claim_salary.ts` |
 | Трата министра | министр | `minister_spend.ts` |
-| Собрать налог в казну | любой | `harvest_fees.ts` |
+| Забрать накопленную комиссию пула в казну | любой | `claim_pool_fees.ts` |
 | Веха: создать → снимки → закрыть | owner | `test_milestone.ts` |
 | Выплата гражданину по вехе | owner | `claim_milestone.ts` |
 | Вернуть остатки вехи в фонд | owner | `release_milestone_reserve.ts` |

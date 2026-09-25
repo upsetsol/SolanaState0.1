@@ -1,9 +1,14 @@
 # On-Chain State — governance-программа (Solana / Anchor)
 
-Смарт-контракт «государства на блокчейне»: налог на транзакции (Token-2022
-transfer-fee), казна, голосование холдеров по весам, роли
-(президент / минфин / минкульт), зарплаты, вехи капитализации (Milestone Fund),
-возможность передать права `owners_authority` другому адресу голосованием.
+Смарт-контракт «государства на блокчейне»: казна пополняется комиссией пула
+Meteora (постоянные 5% с каждой покупки и продажи, в SOL/USDC, а не в нашей монете),
+голосование холдеров по весам, роли (президент / минфин / минкульт), зарплаты,
+вехи капитализации (Milestone Fund), возможность передать права `owners_authority`
+другому адресу голосованием.
+
+**Две монеты.** `governance_mint` — монета государства: только голос (снимки, кворум,
+«граждане»), налога нет. `treasury_mint` — актив казны (парный актив пула: wSOL по умолчанию,
+USDC/USDT — параметром): в нём казна, зарплаты, лимиты министров, траты, фонд вех и выплаты.
 
 > **Статус:** функционально проверено (юнит-тесты + `scripts/e2e.ts` 53/53 на
 > локальном валидаторе и на живом testnet), **не готово к мейннету**. Что остаётся закрыть —
@@ -15,7 +20,9 @@ transfer-fee), казна, голосование холдеров по веса
 ## Стек
 
 - Solana + Anchor **1.1.2** (мейнлайн, под управлением Solana Foundation)
-- Token-2022 (governance-токен с transfer-fee расширением)
+- Token-2022 для монеты государства (метаданные: название, символ; **без** налога)
+- Meteora DAMM v2: пул монета/парный актив с постоянной комиссией 5% только в парном активе;
+  ликвидность блокируется навсегда, позицию (NFT) держит Config PDA
 - TypeScript-скрипты в `scripts/` — вызовы всех инструкций
 
 ## Быстрый старт (devnet, с нуля)
@@ -25,21 +32,28 @@ npm install
 anchor build            # генерирует новый Program ID в target/deploy/*-keypair.json
 anchor deploy            # первый деплой; про апгрейд см. ниже
 
-# 1. создать governance-mint (Token-2022 + transfer-fee).
-#    withheld-authority автоматически = Config PDA этой программы.
-ANCHOR_WALLET=~/.config/solana/id.json \
-ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
-FEE_BPS=500 INITIAL_SUPPLY=1000000000 \
-npx ts-node scripts/create_mint.ts
+export ANCHOR_WALLET=~/.config/solana/id.json
+export ANCHOR_PROVIDER_URL=https://api.devnet.solana.com
+
+# 1. монета государства: Token-2022 + метаданные, БЕЗ налога
+NAME="Test 1" SYMBOL=TEST1 INITIAL_SUPPLY=1000000000 npx ts-node scripts/create_mint.ts
 export GOVERNANCE_MINT=<адрес из вывода>
+# export TREASURY_MINT=<USDC/USDT>      # необязательно; по умолчанию wSOL
 
 # 2. инициализация
-OWNERS_AUTHORITY=<ключ owner'а> ADMIN_AUTHORITY=<ключ admin'а> \
-PARAMS=test \
-npx ts-node scripts/initialize.ts
+OWNERS_AUTHORITY=<ключ owner'а> ADMIN_AUTHORITY=<ключ admin'а> PARAMS=test npx ts-node scripts/initialize.ts
 
 # 3. (опц.) фонд вех
 npx ts-node scripts/setup_milestone_fund.ts
+
+# 4. пул Meteora: постоянная комиссия 5% только в парном активе, ликвидность
+#    блокируется навсегда, позиция (NFT) передаётся Config PDA
+TOKEN_AMOUNT=100000000 QUOTE_AMOUNT=1 npx ts-node scripts/create_pool.ts
+npx ts-node scripts/register_pool.ts        # owners_authority: привязать пул к государству (один раз)
+
+# 5. торговля (тест) и сбор комиссии в казну: claim_pool_fees может вызвать кто угодно
+SIDE=buy AMOUNT=0.1 npx ts-node scripts/pool_swap.ts
+npx ts-node scripts/claim_pool_fees.ts
 ```
 
 Все скрипты читают `GOVERNANCE_MINT` из окружения, а Program ID — из
@@ -67,8 +81,10 @@ solana program deploy target/deploy/onchain_state_solana.so \
 ход голосования). Перед голосованием кто-то (owners) должен посчитать список
 и занести снапшоты.
 
-**Кворум считается от `supply − казна`** — от монет, реально гуляющих у
-людей. Налог, осевший в казне, не поднимает планку явки.
+**Кворум считается от выпуска монеты государства минус остаток монет в хранилище
+зарегистрированного пула** (монеты в пуле голосовать не могут). До `register_pool` — от полного
+выпуска. После регистрации хранилище пула нужно передавать в `create_proposal` / `execute_proposal`
+(`quorum_excluded`).
 
 **Timelock применяется ко ВСЕМ типам предложений, включая SPEND.** Деньги по
 голосованию уходят не сразу после дедлайна, а после `deadline + timelock_secs`.
@@ -79,7 +95,8 @@ solana program deploy target/deploy/onchain_state_solana.so \
 
 **Зарплаты и лимиты министров — от «утреннего снимка» казны**, а не от
 live-баланса. Первый вызов `claim_salary` / `minister_spend` в новых сутках
-фиксирует снимок; `harvest_fees` в течение дня не раздувает сегодняшние лимиты.
+фиксирует снимок; комиссия пула, забранная в течение дня (`claim_pool_fees`), не раздувает сегодняшние лимиты.
+Всё считается в активе казны (для wSOL получатель получает wSOL и разворачивает его сам).
 
 **Лимиты министра — по РОЛИ, а не по кошельку.** Смена ключа минфина не
 сбрасывает недельное окно (`SpendTracker` seeds = `["spend_tracker", config, role]`).
@@ -103,8 +120,8 @@ live-баланса. Первый вызов `claim_salary` / `minister_spend` �
 пула освобождается для следующих вех, веха закрывается (выплаты по ней больше
 невозможны). Скрипт `scripts/release_milestone_reserve.ts`.
 
-**Стартовая казна — 5% supply.** После `create_mint` и `initialize` запустите
-`scripts/fund_treasury.ts` (`FUND_BPS=500`): перевод из кошелька-эмитента в казну (с учётом налога).
+**Казна стартует пустой** и наполняется комиссией пула (`claim_pool_fees`). Для тестов в неё можно положить
+актив казны: `scripts/fund_treasury.ts` (`AMOUNT=1` — 1 SOL заворачивается в wSOL прямо на счёт казны).
 
 **`admin_authority`** (отдельный ключ, задаётся в `initialize`): может
 - `set_pause(true/false)` — глобальная пауза всех трат из казны/фонда;
@@ -112,8 +129,16 @@ live-баланса. Первый вызов `claim_salary` / `minister_spend` �
 Всё остальное — только через голосование. Код и Config публичны, «скрытой»
 эта возможность быть не может — это просто отдельная роль.
 
-**`harvest_fees` нужно вызывать регулярно** (бот/крон). Пермишнлесс, но сам
-не запускается. Не под паузой — это приток в казну, не трата.
+**Комиссия пула → казна.** Комиссия удерживается самим пулом в каждой сделке (в парном активе) и копится на
+позиции. `claim_pool_fees` (пермишнлесс: вызвать может кто угодно, стоит одну обычную комиссию сети) переводит накопленное
+на счёт казны: получатель зашит в контракте, изменить его нельзя. Бот не обязателен: комиссия не сгорает и не
+устаревает, забирать можно раз в день или неделю. Не под паузой — это приток, не трата. Часть комиссии (20%) забирает сам Meteora,
+так что казне достаётся ≈4% оборота, пока весь пул наш; чужая ликвидность в открытом пуле делит комиссию пропорционально доле.
+
+**Пул и позиция.** `create_pool.ts` создаёт пул (монета государства = токен A, актив казны = токен B, режим
+«комиссия только в B»), блокирует ликвидность навсегда и передаёт токен-счёт с NFT позиции Config PDA.
+`register_pool` (только `owners_authority`, один раз) проверяет это ончейн: пара токенов, режим комиссии,
+принадлежность позиции пулу и Config PDA. Комиссию пула создатель изменить не может (только операторы Meteora).
 
 **Границы CHANGE_PARAM.** Голосованием нельзя выставить абсурдные значения
 (кворум 0 или >100%, зарплата >1%/день, timelock с переполнением i64 и т.п.) —
@@ -139,13 +164,15 @@ npm run test:p0     # cargo unit-тесты (чистые функции) + para
 кластера (локальный валидатор или devnet): сам создаёт mint, инициализирует
 с короткими окнами, раздаёт токены 3 холдерам и гоняет весь набор
 (голосование, timelock, кулдаун трат, кворум, роли, лимиты министров,
-зарплаты, пауза, депозит в фонд типа 6, вехи с резервом, harvest) +
-негативные пути. Печатает таблицу PASS/FAIL.
+зарплаты, пауза, депозит в фонд типа 6, вехи с резервом, цикл «пул Meteora → комиссия → казна»)
++ негативные пути. Печатает таблицу PASS/FAIL. Цикл пула нужна программа Meteora на кластере (devnet есть; локально —
+`solana-test-validator` с `--clone-upgradeable-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG --url devnet`),
+иначе он помечается как пропущенный.
 
 ```bash
-solana-test-validator --reset &            # или devnet RPC
-solana program deploy target/deploy/onchain_state_solana.so \
-  --program-id target/deploy/onchain_state_solana-keypair.json
+solana-test-validator --reset \
+  --bpf-program FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy target/deploy/onchain_state_solana.so \
+  --clone-upgradeable-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG --url devnet &
 ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node scripts/e2e.ts
 ```
 
