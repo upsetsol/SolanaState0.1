@@ -56,6 +56,14 @@ export default function App() {
             {active.kind === "phantom" && " В Phantom должен быть включён Testnet Mode (Настройки → Developer Settings)."}
           </Note>
         )}
+        {active?.kind === "phantom" && settings.rpc.includes("testnet") && (
+          <Note kind="info">
+            Вы подписываете через внешний кошелёк в сети testnet. Phantom не умеет проверять транзакции на testnet, поэтому в окне
+            подтверждения могут гореть красные плашки «not enough SOL» и «failed to simulate», а кнопка называться «Confirm (unsafe)».
+            Для тестовой сети это нормально: транзакция безопасна, спишется только комиссия около 0.000005 SOL. Для проверки без окон
+            используйте «+ Тестовый кошелёк» на вкладке «Настройка».
+          </Note>
+        )}
         {!data.loaded && <p className="muted">Загрузка данных из сети…</p>}
         <Page />
       </main>
