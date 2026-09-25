@@ -353,11 +353,10 @@ export async function executeProposal(
     .rpc();
 }
 
-/** Current chain time by the validator's clock (seconds). */
+/** Current chain time (seconds): the Clock sysvar, i.e. what the program itself sees (unix_timestamp at offset 32). */
 export async function chainNow(connection: Connection): Promise<number> {
-  const slot = await connection.getSlot();
-  const t = await connection.getBlockTime(slot);
-  return t ?? Math.floor(Date.now() / 1000);
+  const info = await connection.getAccountInfo(new PublicKey("SysvarC1ock11111111111111111111111111111111"), "confirmed");
+  return info ? Number(info.data.readBigInt64LE(32)) : Math.floor(Date.now() / 1000);
 }
 
 export async function waitUntilChainTime(connection: Connection, target: number): Promise<void> {

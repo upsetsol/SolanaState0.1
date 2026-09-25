@@ -19,8 +19,8 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
+  SYSVAR_CLOCK_PUBKEY,
   Transaction,
-  sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import {
@@ -99,14 +99,29 @@ async function expectOk(name: string, fn: () => Promise<any>) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Congested networks (public testnet) drop transactions: resend with a fresh blockhash
-// when one expires. Applies to every anchor `.rpc()` and to sendAndConfirmTransaction.
+// Real networks (devnet/testnet/mainnet) drop transactions and their websockets are flaky, so every send
+// here polls getSignatureStatuses over plain HTTP and re-sends with a fresh blockhash when one expires.
 const EXPIRED = /expired|block height exceeded|Blockhash not found|blockhash not found/i;
-const origSendAndConfirm = (anchor.AnchorProvider.prototype as any).sendAndConfirm;
-(anchor.AnchorProvider.prototype as any).sendAndConfirm = async function (this: any, ...args: any[]) {
+async function confirmPoll(c: Connection, sig: string, lastValidBlockHeight: number) {
+  for (;;) {
+    const st = (await c.getSignatureStatuses([sig])).value[0];
+    if (st) {
+      if (st.err) throw new Error("Transaction " + sig + " failed: " + JSON.stringify(st.err));
+      if (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized") return;
+    }
+    if ((await c.getBlockHeight("confirmed")) > lastValidBlockHeight) throw new Error("block height exceeded");
+    await sleep(700);
+  }
+}
+async function sendTx(c: Connection, tx: Transaction, sign: (t: Transaction) => Promise<Transaction>, opts?: any): Promise<string> {
   for (let i = 0; ; i++) {
     try {
-      return await origSendAndConfirm.apply(this, args);
+      const { blockhash, lastValidBlockHeight } = await c.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = blockhash;
+      const signed = await sign(tx);
+      const sig = await c.sendRawTransaction(signed.serialize(), { skipPreflight: opts?.skipPreflight ?? false, preflightCommitment: "confirmed" });
+      await confirmPoll(c, sig, lastValidBlockHeight);
+      return sig;
     } catch (e: any) {
       if (i < 6 && EXPIRED.test(String(e?.message ?? e))) {
         await sleep(1500);
@@ -115,19 +130,23 @@ const origSendAndConfirm = (anchor.AnchorProvider.prototype as any).sendAndConfi
       throw e;
     }
   }
+}
+(anchor.AnchorProvider.prototype as any).sendAndConfirm = async function (this: any, tx: any, signers?: Keypair[], opts?: any) {
+  if (!(tx instanceof Transaction)) throw new Error("only legacy transactions are used in this suite");
+  tx.feePayer = tx.feePayer ?? this.wallet.publicKey;
+  return sendTx(this.connection, tx, async (t) => {
+    t.signatures = []; // fresh blockhash => sign again
+    (signers ?? []).forEach((k) => t.partialSign(k));
+    return this.wallet.signTransaction(t);
+  }, opts ?? this.opts);
 };
-async function sendRetry(c: Connection, tx: Transaction, signers: Keypair[], opts: any) {
-  for (let i = 0; ; i++) {
-    try {
-      return await sendAndConfirmTransaction(c, tx, signers, opts);
-    } catch (e: any) {
-      if (i < 6 && EXPIRED.test(String(e?.message ?? e))) {
-        await sleep(1500);
-        continue;
-      }
-      throw e;
-    }
-  }
+async function sendRetry(c: Connection, tx: Transaction, signers: Keypair[], _opts: any) {
+  tx.feePayer = tx.feePayer ?? signers[0].publicKey;
+  return sendTx(c, tx, async (t) => {
+    t.signatures = [];
+    t.sign(...signers);
+    return t;
+  });
 }
 // Flaky networks (public RPCs, sandboxes) reset connections: retry transport errors.
 async function retryFetch(input: any, init?: any): Promise<any> {
@@ -143,9 +162,11 @@ async function retryFetch(input: any, init?: any): Promise<any> {
   throw last;
 }
 const conn = new Connection(RPC, { commitment: "confirmed", fetch: retryFetch as any });
+// The program's own clock: the Clock sysvar (unix_timestamp at offset 32). getBlockTime is often null for the
+// newest slots on real clusters and the local clock drifts, so neither is safe for boundary-exact waits.
 async function chainNow() {
-  const s = await conn.getSlot();
-  return (await conn.getBlockTime(s)) ?? Math.floor(Date.now() / 1000);
+  const info = await conn.getAccountInfo(SYSVAR_CLOCK_PUBKEY, "confirmed");
+  return Number(info!.data.readBigInt64LE(32));
 }
 async function waitChain(target: number) {
   for (;;) {
@@ -230,11 +251,14 @@ async function main() {
   };
 
   // ---------- initialize (ultra-short windows) ----------
-  const VOTE = 14,
-    TL = 8,
-    COOL = 10,
-    FB = 6,
-    GRACE = 8;
+  // Ultra-short windows suit a local validator (instant transactions). On a real network set E2E_SLOW=1:
+  // a proposal needs ~5 transactions between creation and the last vote, so the window must outlast them.
+  const SLOW = process.env.E2E_SLOW === "1";
+  const VOTE = SLOW ? 75 : 14,
+    TL = SLOW ? 15 : 8,
+    COOL = SLOW ? 20 : 10,
+    FB = SLOW ? 12 : 6,
+    GRACE = SLOW ? 20 : 8;
   await expectOk("initialize", () =>
     program.methods
       .initialize(
