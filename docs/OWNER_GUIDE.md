@@ -1,12 +1,14 @@
-# Руководство: как запустить и потрогать контракт руками (testnet)
+# Руководство: как запустить и потрогать контракт руками (devnet, версия v4)
 
 Для того, кто получил доступ к репозиторию и хочет сам всё инициализировать и посмотреть,
-как работает контракт. Программа уже задеплоена на **Solana testnet**:
+как работает контракт. Актуальная версия (**v4**: комиссия пула Meteora вместо налога токена) стоит на **Solana devnet**
+(на testnet лежит прежняя v3 с налогом: для неё см. руководство в ветке `main`; на testnet нет программы Meteora, поэтому пул там не работает):
 
 ```
 Program ID: FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy
-Обозреватель: https://explorer.solana.com/address/FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy?cluster=testnet
+Обозреватель: https://explorer.solana.com/address/FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy?cluster=devnet
 ```
+Руководство лежит в ветке `pool-fees`: `git clone ...` затем `git checkout pool-fees`.
 
 ## Как это устроено (главное)
 
@@ -44,21 +46,22 @@ Rust и Anchor **не нужны**: описание контракта уже �
 
 ```bash
 solana-keygen new -o ~/owner.json          # создать кошелёк (запомните seed-фразу, ключ никому не отправлять)
-solana config set --url testnet
+solana config set --url devnet
 solana config set --keypair ~/owner.json
 solana address                              # ваш публичный адрес
 ```
-Тестовые SOL: https://faucet.solana.com → выбрать **Testnet** → вставить адрес. Нужно около **2–3 SOL**
-(запросить можно несколько раз). Проверка: `solana balance`.
+Тестовые SOL: https://faucet.solana.com → выбрать **Devnet** → вставить адрес. Нужно около **2–3 SOL**
+(запросить можно несколько раз; если кран отказывает по лимиту, попробуйте позже). Проверка: `solana balance`.
 
-Публичный testnet иногда тормозит: если транзакция не проходит (`Blockhash expired` и т.п.), просто
-повторите команду.
+Публичный devnet иногда тормозит и обрывает соединения: если транзакция не проходит (`Blockhash expired`, `429` и т.п.),
+просто повторите команду. Для стабильной работы лучше завести бесплатный ключ у провайдера RPC (например Helius) и
+подставить его адрес вместо публичного; ключ храните только в переменной окружения.
 
 ## 3. Общие настройки терминала
 
 Выполняйте в каждом новом окне терминала (в папке проекта):
 ```bash
-export ANCHOR_PROVIDER_URL=https://api.testnet.solana.com
+export ANCHOR_PROVIDER_URL=https://api.devnet.solana.com     # или ваш RPC-адрес
 export ANCHOR_WALLET=~/owner.json
 ```
 
@@ -71,8 +74,8 @@ cd web
 npm install
 npm run dev        # откройте http://127.0.0.1:5173
 ```
-Вкладка «Настройка» → выбрать Testnet → «+ Тестовый кошелёк» → получить SOL на faucet.solana.com → пройти мастер
-(токен, инициализация, казна, фонд вех). Дальше вкладки «Предложения», «Деньги», «Вехи», «Админ». Подробности: `web/README.md`.
+Вкладка «Настройка» → выбрать Devnet → «+ Тестовый кошелёк» → получить SOL (кнопка Airdrop или faucet.solana.com) → пройти мастер
+(токен, инициализация, SOL в казну для теста, фонд вех, привязка пула Meteora; сам пул создаётся скриптом `create_pool.ts`). Дальше вкладки «Предложения», «Деньги», «Вехи», «Админ». Подробности: `web/README.md`.
 
 ## 4. Быстрый способ увидеть всё сразу
 
@@ -159,14 +162,14 @@ npx ts-node scripts/execute_proposal.ts 0 --spend
 
 - В терминале: `inspect.ts` (настройки, роли, лимиты, резерв вех).
 - В обозревателе: вставить адрес транзакции (печатается после каждой команды) на
-  https://explorer.solana.com/?cluster=testnet. Видно, что и когда произошло.
+  https://explorer.solana.com/?cluster=devnet. Видно, что и когда произошло.
 
 ## 8. Если вы работаете через Claude Code
 
 Откройте папку проекта в Claude Code и напишите, например:
 
-> Прочитай README.md, OPEN_ITEMS.md и docs/OWNER_GUIDE.md. Я хочу на testnet поднять своё государство
-> и по шагам пройти сценарий «голосование за трату». Мой кошелёк ~/owner.json, сеть testnet.
+> Прочитай README.md, OPEN_ITEMS.md и docs/OWNER_GUIDE.md. Я хочу на devnet поднять своё государство
+> и по шагам пройти сценарий «голосование за трату». Мой кошелёк ~/owner.json, сеть devnet.
 > Веди меня по шагам и объясняй, что делает каждая команда.
 
 Claude прочитает код, запустит нужные скрипты и объяснит результат. Приватный ключ ему не отправляйте
