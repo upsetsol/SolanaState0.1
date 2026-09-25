@@ -7,17 +7,19 @@
 //   HOLDER=<pubkey>          (the citizen to pay)
 
 import { PublicKey } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import {
   anchor,
   getProvider,
   loadProgram,
-  GOVERNANCE_MINT,
+  TREASURY_MINT,
   configPda,
   milestonePda,
   milestoneSnapPda,
   milestoneFundPda,
-  ata,
-  TOKEN_PROGRAM,
+  treasuryAtaOf,
+  TREASURY_PROGRAM,
+  ATA_PROGRAM,
 } from "./lib/env";
 
 async function main() {
@@ -34,14 +36,17 @@ async function main() {
     .claimMilestone(milestoneNumber, holder)
     .accounts({
       payer: provider.wallet.publicKey,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
+      treasuryMint: TREASURY_MINT,
       milestoneRecord: mPda,
       milestoneSnapshot: milestoneSnapPda(mPda, holder),
       milestoneFund: milestoneFundPda(),
-      claimantTokenAccount: ata(holder),
-      tokenProgram: TOKEN_PROGRAM,
+      claimantTokenAccount: treasuryAtaOf(holder),
+      tokenProgram: TREASURY_PROGRAM,
     })
+    .preInstructions([
+      createAssociatedTokenAccountIdempotentInstruction(provider.wallet.publicKey, treasuryAtaOf(holder), holder, TREASURY_MINT, TREASURY_PROGRAM, ATA_PROGRAM),
+    ])
     .rpc();
 
   console.log(`claim_milestone (holder ${holder.toBase58()}) tx:`, tx);

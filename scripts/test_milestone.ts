@@ -19,7 +19,6 @@ import {
   milestoneSnapPda,
   milestoneFundPda,
   ata,
-  TOKEN_PROGRAM,
 } from "./lib/env";
 
 async function main() {
@@ -39,7 +38,6 @@ async function main() {
     .createMilestone()
     .accounts({
       owner: me,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
       milestoneRecord: mPda,
       systemProgram: SystemProgram.programId,
@@ -53,8 +51,8 @@ async function main() {
       .postMilestoneSnapshot(n, holder)
       .accounts({
         owner: me,
-        governanceMint: GOVERNANCE_MINT,
         config: configPda(),
+        governanceMint: GOVERNANCE_MINT,
         milestoneRecord: mPda,
         holderTokenAccount: ata(holder),
         milestoneSnapshot: milestoneSnapPda(mPda, holder),
@@ -69,12 +67,10 @@ async function main() {
     .finalizeMilestone(n)
     .accounts({
       owner: me,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
       milestoneRecord: mPda,
       previousMilestone: n.toNumber() > 1 ? milestonePda(n.toNumber() - 1) : null,
       milestoneFund: milestoneFundPda(),
-      tokenProgram: TOKEN_PROGRAM,
     })
     .rpc();
   console.log("finalize_milestone tx:", tx3);

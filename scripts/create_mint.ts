@@ -1,13 +1,13 @@
-// Creates the governance mint: Token-2022 with the TransferFee extension.
+// Creates the governance mint: the state's own voting coin.
 //
-// CRITICAL: the withheld-fee authority is set to the program's Config PDA
-// (derived from this very mint + PROGRAM_ID), so harvest_fees can later sweep
-// the tax into the treasury. That's why the mint keypair is generated first,
-// the PDA computed from it, and only then the mint initialised.
+// Token-2022 with the MetadataPointer + TokenMetadata extensions (name, symbol, logo shown by
+// wallets and explorers). NO transfer tax: the treasury is fed by the pool trading fee instead
+// (see scripts/create_pool.ts). Mint authority stays with the payer so the supply can be handed
+// out; renounce it afterwards (`spl-token authorize <mint> mint --disable`) once distribution is done.
 //
-//   PROGRAM_ID=<program>        (optional — defaults to IDL address)
-//   FEE_BPS=500                 (optional — 5% transfer tax, default)
-//   MAX_FEE=<raw>               (optional — per-transfer fee cap, default: none)
+//   NAME="Test 1"               token name (default "Test 1")
+//   SYMBOL=TEST1                token symbol (default "TEST1")
+//   URI=<https://...json>       metadata JSON with the logo (optional, default empty)
 //   DECIMALS=9                  (optional)
 //   INITIAL_SUPPLY=<ui>         (optional — mint this many tokens to the payer)
 //   OUT=./.mint.json            (optional — where to save the mint keypair)
@@ -17,7 +17,6 @@
 import {
   Connection,
   Keypair,
-  PublicKey,
   SystemProgram,
   Transaction,
   sendAndConfirmTransaction,
@@ -26,16 +25,18 @@ import {
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   ExtensionType,
+  TYPE_SIZE,
+  LENGTH_SIZE,
   getMintLen,
   createInitializeMintInstruction,
-  createInitializeTransferFeeConfigInstruction,
+  createInitializeMetadataPointerInstruction,
   createAssociatedTokenAccountIdempotentInstruction,
   createMintToInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
+import { createInitializeInstruction, pack, TokenMetadata } from "@solana/spl-token-metadata";
 import * as fs from "fs";
 import * as os from "os";
-import { readIdl } from "./lib/idl";
 
 function loadKeypair(path: string): Keypair {
   const p = path.startsWith("~") ? path.replace("~", os.homedir()) : path;
@@ -43,37 +44,30 @@ function loadKeypair(path: string): Keypair {
 }
 
 async function main() {
-  const programId = new PublicKey(process.env.PROGRAM_ID || readIdl().address);
-  const feeBps = Number(process.env.FEE_BPS ?? "500");
   const decimals = Number(process.env.DECIMALS ?? "9");
-  const maxFee = BigInt(process.env.MAX_FEE ?? "18446744073709551615"); // u64::MAX = no cap
   const outPath = process.env.OUT ?? "./.mint.json";
-  // Tax is immutable by default: nobody (not even the deployer) can change it.
-  // FEE_MUTABLE=1 keeps the deployer as fee authority — TEST MINTS ONLY.
-  const feeMutable = process.env.FEE_MUTABLE === "1";
+  const name = process.env.NAME ?? "Test 1";
+  const symbol = process.env.SYMBOL ?? "TEST1";
+  const uri = process.env.URI ?? "";
 
-  const connection = new Connection(
-    process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com",
-    "confirmed"
-  );
+  const connection = new Connection(process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com", "confirmed");
   const payer = loadKeypair(process.env.ANCHOR_WALLET || "~/.config/solana/id.json");
-
   const mint = Keypair.generate();
-  const [configPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("config"), mint.publicKey.toBuffer()],
-    programId
-  );
 
-  console.log("Program:            ", programId.toBase58());
-  console.log("Mint:               ", mint.publicKey.toBase58());
-  console.log("Config PDA:         ", configPda.toBase58());
-  console.log("Fee:                ", feeBps, "bps");
-  const feeAuthority = feeMutable ? payer.publicKey : null;
-  console.log("transfer-fee config authority:", feeAuthority ? feeAuthority.toBase58() + "  (MUTABLE — test only)" : "none — tax frozen forever");
-  console.log("withdraw-withheld authority:   Config PDA", configPda.toBase58());
+  const metadata: TokenMetadata = {
+    mint: mint.publicKey,
+    name,
+    symbol,
+    uri,
+    additionalMetadata: [],
+  };
+  const mintLen = getMintLen([ExtensionType.MetadataPointer]);
+  const metadataLen = TYPE_SIZE + LENGTH_SIZE + pack(metadata).length;
+  const lamports = await connection.getMinimumBalanceForRentExemption(mintLen + metadataLen);
 
-  const mintLen = getMintLen([ExtensionType.TransferFeeConfig]);
-  const lamports = await connection.getMinimumBalanceForRentExemption(mintLen);
+  console.log("Mint:    ", mint.publicKey.toBase58());
+  console.log("Name:    ", name, "| symbol:", symbol, "| decimals:", decimals);
+  console.log("Transfer tax: none (the treasury is fed by the pool fee)");
 
   const tx = new Transaction().add(
     SystemProgram.createAccount({
@@ -83,59 +77,41 @@ async function main() {
       lamports,
       programId: TOKEN_2022_PROGRAM_ID,
     }),
-    createInitializeTransferFeeConfigInstruction(
-      mint.publicKey,
-      feeAuthority, // null = the tax rate is frozen forever (prod default)
-      configPda, // withdraw-withheld authority — MUST be the Config PDA
-      feeBps,
-      maxFee,
-      TOKEN_2022_PROGRAM_ID
-    ),
+    // the metadata lives in the mint account itself
+    createInitializeMetadataPointerInstruction(mint.publicKey, payer.publicKey, mint.publicKey, TOKEN_2022_PROGRAM_ID),
     createInitializeMintInstruction(
       mint.publicKey,
       decimals,
       payer.publicKey, // mint authority (for the initial distribution)
-      null, // freeze authority
+      null, // freeze authority: none
       TOKEN_2022_PROGRAM_ID
-    )
+    ),
+    createInitializeInstruction({
+      programId: TOKEN_2022_PROGRAM_ID,
+      metadata: mint.publicKey,
+      updateAuthority: payer.publicKey,
+      mint: mint.publicKey,
+      mintAuthority: payer.publicKey,
+      name,
+      symbol,
+      uri,
+    })
   );
 
   if (process.env.INITIAL_SUPPLY) {
     const raw = BigInt(process.env.INITIAL_SUPPLY) * 10n ** BigInt(decimals);
-    const payerAta = getAssociatedTokenAddressSync(
-      mint.publicKey,
-      payer.publicKey,
-      false,
-      TOKEN_2022_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
+    const payerAta = getAssociatedTokenAddressSync(mint.publicKey, payer.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
     tx.add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        payer.publicKey,
-        payerAta,
-        payer.publicKey,
-        mint.publicKey,
-        TOKEN_2022_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-      ),
-      createMintToInstruction(
-        mint.publicKey,
-        payerAta,
-        payer.publicKey,
-        raw,
-        [],
-        TOKEN_2022_PROGRAM_ID
-      )
+      createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, payerAta, payer.publicKey, mint.publicKey, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
+      createMintToInstruction(mint.publicKey, payerAta, payer.publicKey, raw, [], TOKEN_2022_PROGRAM_ID)
     );
-    console.log("Initial supply:     ", process.env.INITIAL_SUPPLY, "->", payerAta.toBase58());
+    console.log("Initial supply:", process.env.INITIAL_SUPPLY, "->", payerAta.toBase58());
   }
 
-  const sig = await sendAndConfirmTransaction(connection, tx, [payer, mint], {
-    commitment: "confirmed",
-  });
+  const sig = await sendAndConfirmTransaction(connection, tx, [payer, mint], { commitment: "confirmed" });
   console.log("\ncreate_mint tx:", sig);
 
-  fs.writeFileSync(outPath, JSON.stringify(Array.from(mint.secretKey)));
+  fs.writeFileSync(outPath, JSON.stringify(Array.from(mint.secretKey)), { mode: 0o600 });
   console.log("Mint keypair saved to", outPath);
   console.log("\nNext:  export GOVERNANCE_MINT=" + mint.publicKey.toBase58());
 }

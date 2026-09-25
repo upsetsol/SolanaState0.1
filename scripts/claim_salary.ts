@@ -1,20 +1,22 @@
 // Claim a role's salary — once a day, a % of the MORNING treasury snapshot.
+// Paid in the treasury asset (wSOL by default): the script creates your account for it if missing.
 //
 //   GOVERNANCE_MINT=<mint>
 //   KEYPAIR=~/president.json   (must be president / finance / culture minister)
 
-import { SystemProgram } from "@solana/web3.js";
+import { SystemProgram, PublicKey, Transaction } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import {
   getProvider,
   loadProgram,
-  GOVERNANCE_MINT,
+  TREASURY_MINT,
   configPda,
   treasuryAta,
-  ata,
+  treasuryAtaOf,
   PROGRAM_ID,
-  TOKEN_PROGRAM,
+  TREASURY_PROGRAM,
+  ATA_PROGRAM,
 } from "./lib/env";
-import { PublicKey } from "@solana/web3.js";
 
 async function main() {
   const provider = getProvider();
@@ -30,14 +32,17 @@ async function main() {
     .claimSalary()
     .accounts({
       claimant: me,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
+      treasuryMint: TREASURY_MINT,
       payrollClaim: payrollClaimPda,
       treasury: treasuryAta(),
-      claimantTokenAccount: ata(me),
-      tokenProgram: TOKEN_PROGRAM,
+      claimantTokenAccount: treasuryAtaOf(me),
+      tokenProgram: TREASURY_PROGRAM,
       systemProgram: SystemProgram.programId,
     })
+    .preInstructions([
+      createAssociatedTokenAccountIdempotentInstruction(me, treasuryAtaOf(me), me, TREASURY_MINT, TREASURY_PROGRAM, ATA_PROGRAM),
+    ])
     .rpc();
 
   console.log("claim_salary tx:", tx);

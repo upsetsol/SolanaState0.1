@@ -1,4 +1,4 @@
-// Reference flow: create a SPEND proposal (return some treasury to our own
+// Reference flow: create a SPEND proposal (pay some of the treasury asset to our own
 // wallet — a test scenario), post a VERIFIED snapshot for our wallet (weight
 // is read on-chain from the token account, not passed in), then vote "for".
 //
@@ -23,7 +23,7 @@ async function main() {
   const program = loadProgram(provider);
   const me = provider.wallet.publicKey;
 
-  const spendAmount = new anchor.BN(process.env.AMOUNT ?? "100000000000000"); // 100k @ 9dp
+  const spendAmount = new anchor.BN(process.env.AMOUNT ?? "1000000"); // raw units of the treasury asset (0.001 SOL)
 
   const { id, pda } = await createProposal(program, provider, {
     type: 0,

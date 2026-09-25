@@ -1,49 +1,43 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{
+    instruction::{AccountMeta, Instruction},
+    program::invoke_signed,
+};
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{
-        self, Mint, TokenAccount, TokenInterface, TransferChecked,
-        HarvestWithheldTokensToMint, WithdrawWithheldTokensFromMint,
-    },
+    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
 declare_id!("FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy");
 
 // ============================================================================
-// v3 — governance/treasury hardening pass. Changes in this round:
-//  * Vote weight is no longer a free-form number: post_voter_snapshot now
-//    verifies it against the voter's REAL Token-2022 balance, and snapshots
-//    can only be added BEFORE the first vote is cast (no adding voters
-//    mid-count).
-//  * Quorum / proposal-creation threshold are measured against
-//    supply - treasury (coins actually in people's hands), so tax piling up
-//    in the treasury does not silently raise the bar.
-//  * Timelock now applies to EVERY proposal type, SPEND included.
-//  * execute_proposal is owners_authority-only (was permissionless), with a
-//    president fallback (see below).
-//  * President / finance minister / culture minister must be distinct.
-//  * CHANGE_PARAM values are bounds-checked (see check_param_bounds).
-//  * admin_authority (separate from owners_authority): can pause all
-//    treasury outflows and adjust the citizenship threshold.
-//  * Salary + minister limits are computed from a once-a-day "morning"
-//    snapshot of the treasury, not the live balance — harvesting tax in the
-//    afternoon can't bump today's spend caps.
-//  * Minister spend limits are tracked per ROLE, not per wallet — swapping
-//    the minister's key no longer resets the weekly window.
-//  * Milestone Fund is topped up only through governance (proposal type 6)
-//    and only up to milestone_deposit_bps of the treasury.
-//  * If owners_authority doesn't execute a passed proposal, the president can
-//    after exec_fallback_secs (default 1 day) past the timelock.
-//  * release_milestone_reserve: after a grace period the unclaimed part of a
-//    milestone returns to the fund and the milestone is closed.
-//  * Money-moving proposals (SPEND, milestone deposit) can only be EXECUTED
-//    once per spend_cooldown_secs — you can't run several 30% spends
-//    back-to-back to drain the treasury.
-//  * Milestone payouts reserve their pool at finalize time
-//    (config.milestone_reserved) so the same coins can't be promised to a
-//    later milestone. claim_milestone no longer needs the citizen's
-//    signature — the team pushes the payout to each citizen's ATA.
-//  * All state accounts size themselves via #[derive(InitSpace)].
+// v4 — pool-fee model. Two different mints now:
+//  * governance_mint: the state's own coin. It only gives voting weight
+//    (snapshots, quorum, "citizen" threshold). NO transfer tax.
+//  * treasury_mint: the pool's quote asset (wSOL / USDC / USDT). Treasury,
+//    salaries, minister limits, SPEND proposals, milestone fund and payouts
+//    are all denominated in it.
+//  The treasury is fed by the trading fee of a Meteora DAMM v2 pool
+//  (governance_mint / treasury_mint, collect-fee mode "only B"). The
+//  liquidity position (an NFT) belongs to the Config PDA; anyone can call
+//  claim_pool_fees, and the fee can only land on the treasury account.
+//
+// Rules carried over from v3 (see README):
+//  * Vote weight = the voter's REAL token balance, checked when the snapshot
+//    is posted; snapshots only BEFORE the first vote.
+//  * Quorum / proposal-creation threshold: measured against the circulating
+//    supply (supply minus the balance of the registered pool vault).
+//  * Timelock on every proposal type; execute is owners_authority-only with a
+//    president fallback after exec_fallback_secs.
+//  * President / finance minister / culture minister are distinct addresses.
+//  * CHANGE_PARAM values are bounds-checked (check_param_bounds).
+//  * admin_authority: pause + citizenship threshold.
+//  * Salaries and minister limits use a once-a-day "morning" snapshot of the
+//    treasury, so fees claimed in the afternoon can't raise today's caps.
+//  * Minister limits are per ROLE; Milestone Fund only via governance
+//    (proposal type 6, capped); milestone pools are reserved at finalize and
+//    unclaimed parts return after milestone_grace_secs; money-moving
+//    proposals obey spend_cooldown_secs.
 // ============================================================================
 
 pub const BPS_DENOM: u64 = 10_000;
@@ -68,18 +62,57 @@ pub const MAX_PAYROLL_BPS: u64 = 100; // 1%/day
 pub const MAX_MINISTER_BPS: u64 = 2_000; // 20%
 pub const MIN_QUORUM_BPS: u64 = 1;
 
+// --- Meteora DAMM v2 (cp-amm) ------------------------------------------------
+/// Program that owns the pool + position we register and claim fees from.
+pub const METEORA_CP_AMM: Pubkey = pubkey!("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+/// Anchor discriminator of cp-amm `claim_position_fee` (no arguments).
+pub const CLAIM_POSITION_FEE_DISC: [u8; 8] = [180, 38, 154, 17, 133, 33, 162, 211];
+/// Byte offsets inside cp-amm accounts (8-byte Anchor discriminator included).
+/// Checked against live pools; see experiments/dex and scripts/pool_fees_e2e.ts.
+pub const POOL_TOKEN_A_MINT_OFFSET: usize = 168;
+pub const POOL_TOKEN_B_MINT_OFFSET: usize = 200;
+pub const POOL_TOKEN_A_VAULT_OFFSET: usize = 232;
+pub const POOL_TOKEN_B_VAULT_OFFSET: usize = 264;
+pub const POOL_COLLECT_FEE_MODE_OFFSET: usize = 484;
+pub const POSITION_POOL_OFFSET: usize = 8;
+pub const POSITION_NFT_MINT_OFFSET: usize = 40;
+/// collect_fee_mode value meaning "trading fee is taken only in token B".
+pub const COLLECT_FEE_ONLY_B: u8 = 1;
+
 // ==================== Pure helpers (unit-tested below) ====================
 
-/// The base used for quorum / proposal-creation math: coins that are
-/// actually circulating (total supply minus what sits in the treasury).
-pub fn voting_base(supply: u128, treasury_amount: u64) -> u128 {
-    supply.saturating_sub(treasury_amount as u128)
+/// The base used for quorum / proposal-creation math: governance coins that
+/// can actually vote — total supply minus what sits in the registered pool
+/// vault (coins in a pool have no voter). `excluded` is 0 when no pool is registered.
+pub fn voting_base(supply: u128, excluded: u64) -> u128 {
+    supply.saturating_sub(excluded as u128)
 }
 
-/// True when the votes cast clear the quorum bar against the circulating base.
-pub fn quorum_met(total_votes: u128, supply: u128, treasury_amount: u64, quorum_bps: u64) -> bool {
+/// True when the votes cast clear the quorum bar against the voting base.
+pub fn quorum_met(total_votes: u128, supply: u128, excluded: u64, quorum_bps: u64) -> bool {
     total_votes.saturating_mul(BPS_DENOM as u128)
-        >= voting_base(supply, treasury_amount).saturating_mul(quorum_bps as u128)
+        >= voting_base(supply, excluded).saturating_mul(quorum_bps as u128)
+}
+
+/// Reads a 32-byte key out of a foreign account's raw data (None if too short).
+pub fn read_key_at(data: &[u8], offset: usize) -> Option<Pubkey> {
+    let end = offset.checked_add(32)?;
+    let bytes: [u8; 32] = data.get(offset..end)?.try_into().ok()?;
+    Some(Pubkey::new_from_array(bytes))
+}
+
+/// Governance-coin balance excluded from the voting base. Zero until a pool is
+/// registered; afterwards the pool's token-A vault must be passed in.
+fn excluded_amount(
+    config: &Config,
+    account: Option<&InterfaceAccount<TokenAccount>>,
+) -> Result<u64> {
+    if config.quorum_excluded_account == Pubkey::default() {
+        return Ok(0);
+    }
+    let acc = account.ok_or(error!(GovError::ExcludedAccountMissing))?;
+    require_keys_eq!(acc.key(), config.quorum_excluded_account, GovError::ExcludedAccountMissing);
+    Ok(acc.amount)
 }
 
 /// 30%-of-treasury ceiling for a single SPEND proposal.
@@ -200,7 +233,9 @@ fn refresh_treasury_snapshot(config: &mut Config, treasury_amount: u64, now: i64
 pub mod onchain_state_solana {
     use super::*;
 
-    /// Sets up Config + treasury (an ATA of governance_mint, owned by the Config PDA).
+    /// Sets up Config + treasury (an ATA of treasury_mint, owned by the Config PDA).
+    /// governance_mint = the voting coin, treasury_mint = the asset the pool pays
+    /// its fee in (wSOL / USDC / USDT). `token_program` is the treasury asset's program.
     /// `owners_authority` (typically a Squads vault) posts vote snapshots and
     /// executes proposals. `admin_authority` (a separate key/multisig) can pause
     /// treasury outflows and tune the citizenship threshold. The payer signs and
@@ -239,6 +274,11 @@ pub mod onchain_state_solana {
         require!(milestone_grace_secs >= 0, GovError::InvalidBps);
         require!(citizenship_threshold_bps <= BPS_DENOM, GovError::InvalidBps);
         require!(milestone_deposit_bps <= BPS_DENOM, GovError::InvalidBps);
+        require_keys_neq!(
+            ctx.accounts.governance_mint.key(),
+            ctx.accounts.treasury_mint.key(),
+            GovError::InvalidBps
+        );
 
         let config = &mut ctx.accounts.config;
         config.owners_authority = owners_authority;
@@ -247,7 +287,12 @@ pub mod onchain_state_solana {
         config.finance_minister = Pubkey::default(); // vacant until APPOINT_ROLE
         config.culture_minister = Pubkey::default();
         config.governance_mint = ctx.accounts.governance_mint.key();
+        config.treasury_mint = ctx.accounts.treasury_mint.key();
         config.treasury_token_account = ctx.accounts.treasury.key();
+        config.fee_pool = Pubkey::default();
+        config.fee_position = Pubkey::default();
+        config.fee_position_nft_account = Pubkey::default();
+        config.quorum_excluded_account = Pubkey::default();
         config.milestone_fund_token_account = Pubkey::default();
         config.voting_period_secs = voting_period_secs;
         config.proposal_threshold_bps = proposal_threshold_bps;
@@ -342,7 +387,7 @@ pub mod onchain_state_solana {
         claim.last_claim_ts = now;
         claim.bump = ctx.bumps.payroll_claim;
 
-        let mint_key = ctx.accounts.governance_mint.key();
+        let mint_key = ctx.accounts.config.governance_mint;
         let seeds: &[&[u8]] = &[b"config", mint_key.as_ref(), &[ctx.accounts.config.bump]];
         let signer_seeds: &[&[&[u8]]] = &[seeds];
 
@@ -351,14 +396,14 @@ pub mod onchain_state_solana {
                 ctx.accounts.token_program.key(),
                 TransferChecked {
                     from: ctx.accounts.treasury.to_account_info(),
-                    mint: ctx.accounts.governance_mint.to_account_info(),
+                    mint: ctx.accounts.treasury_mint.to_account_info(),
                     to: ctx.accounts.claimant_token_account.to_account_info(),
                     authority: ctx.accounts.config.to_account_info(),
                 },
                 signer_seeds,
             ),
             payout,
-            ctx.accounts.governance_mint.decimals,
+            ctx.accounts.treasury_mint.decimals,
         )?;
         Ok(())
     }
@@ -394,7 +439,7 @@ pub mod onchain_state_solana {
     }
 
     /// Create a proposal. Unlike voting, the creation threshold reads the
-    /// creator's LIVE balance against the circulating base (supply - treasury)
+    /// creator's LIVE balance against the voting base (supply - pool vault)
     /// — deliberately fine, because creating a proposal doesn't execute
     /// anything, it just opens a discussion.
     /// proposal_type: 0=SPEND 1=ChangePresident 2=AppointFinance
@@ -413,7 +458,9 @@ pub mod onchain_state_solana {
 
         let supply = ctx.accounts.governance_mint.supply as u128;
         let treasury_balance = ctx.accounts.treasury.amount;
-        let base = voting_base(supply, treasury_balance);
+        let excluded =
+            excluded_amount(&ctx.accounts.config, ctx.accounts.quorum_excluded.as_deref())?;
+        let base = voting_base(supply, excluded);
         let creator_balance = ctx.accounts.creator_token_account.amount as u128;
         let threshold_bps = ctx.accounts.config.proposal_threshold_bps as u128;
         require!(
@@ -507,8 +554,10 @@ pub mod onchain_state_solana {
 
         let total_votes =
             (ctx.accounts.proposal.votes_for + ctx.accounts.proposal.votes_against) as u128;
+        let excluded =
+            excluded_amount(&ctx.accounts.config, ctx.accounts.quorum_excluded.as_deref())?;
         require!(
-            quorum_met(total_votes, supply, ctx.accounts.treasury.amount, quorum_bps),
+            quorum_met(total_votes, supply, excluded, quorum_bps),
             GovError::QuorumNotReached
         );
         require!(
@@ -567,7 +616,7 @@ pub mod onchain_state_solana {
                     .ok_or(error!(GovError::WrongRecipient))?;
                 require_keys_eq!(recipient.owner, target, GovError::WrongRecipient);
 
-                let mint_key = ctx.accounts.governance_mint.key();
+                let mint_key = ctx.accounts.config.governance_mint;
                 let seeds: &[&[u8]] =
                     &[b"config", mint_key.as_ref(), &[ctx.accounts.config.bump]];
                 let signer_seeds: &[&[&[u8]]] = &[seeds];
@@ -577,14 +626,14 @@ pub mod onchain_state_solana {
                         ctx.accounts.token_program.key(),
                         TransferChecked {
                             from: ctx.accounts.treasury.to_account_info(),
-                            mint: ctx.accounts.governance_mint.to_account_info(),
+                            mint: ctx.accounts.treasury_mint.to_account_info(),
                             to: recipient.to_account_info(),
                             authority: ctx.accounts.config.to_account_info(),
                         },
                         signer_seeds,
                     ),
                     amount,
-                    ctx.accounts.governance_mint.decimals,
+                    ctx.accounts.treasury_mint.decimals,
                 )?;
             }
             1 => {
@@ -657,7 +706,7 @@ pub mod onchain_state_solana {
                     GovError::MilestoneFundMissing
                 );
 
-                let mint_key = ctx.accounts.governance_mint.key();
+                let mint_key = ctx.accounts.config.governance_mint;
                 let seeds: &[&[u8]] =
                     &[b"config", mint_key.as_ref(), &[ctx.accounts.config.bump]];
                 let signer_seeds: &[&[&[u8]]] = &[seeds];
@@ -667,14 +716,14 @@ pub mod onchain_state_solana {
                         ctx.accounts.token_program.key(),
                         TransferChecked {
                             from: ctx.accounts.treasury.to_account_info(),
-                            mint: ctx.accounts.governance_mint.to_account_info(),
+                            mint: ctx.accounts.treasury_mint.to_account_info(),
                             to: fund.to_account_info(),
                             authority: ctx.accounts.config.to_account_info(),
                         },
                         signer_seeds,
                     ),
                     amount,
-                    ctx.accounts.governance_mint.decimals,
+                    ctx.accounts.treasury_mint.decimals,
                 )?;
             }
             _ => return err!(GovError::InvalidProposalType),
@@ -747,7 +796,7 @@ pub mod onchain_state_solana {
         tracker.weekly_spent = tracker.weekly_spent.checked_add(amount).unwrap();
         tracker.bump = ctx.bumps.spend_tracker;
 
-        let mint_key = ctx.accounts.governance_mint.key();
+        let mint_key = ctx.accounts.config.governance_mint;
         let seeds: &[&[u8]] = &[b"config", mint_key.as_ref(), &[ctx.accounts.config.bump]];
         let signer_seeds: &[&[&[u8]]] = &[seeds];
 
@@ -756,49 +805,122 @@ pub mod onchain_state_solana {
                 ctx.accounts.token_program.key(),
                 TransferChecked {
                     from: ctx.accounts.treasury.to_account_info(),
-                    mint: ctx.accounts.governance_mint.to_account_info(),
+                    mint: ctx.accounts.treasury_mint.to_account_info(),
                     to: ctx.accounts.recipient_token_account.to_account_info(),
                     authority: ctx.accounts.config.to_account_info(),
                 },
                 signer_seeds,
             ),
             amount,
-            ctx.accounts.governance_mint.decimals,
+            ctx.accounts.treasury_mint.decimals,
         )?;
         Ok(())
     }
 
-    /// Permissionless "cleanup" — collects the Token-2022 transfer-fee tax
-    /// that piled up on the given accounts and sweeps it into the treasury.
-    /// Not pause-gated: this is an INFLOW to the treasury, not a spend.
-    pub fn harvest_fees<'a>(ctx: Context<'a, HarvestFees<'a>>) -> Result<()> {
-        let source_accounts: Vec<AccountInfo> = ctx.remaining_accounts.to_vec();
+    /// One-time (owners_authority): link the Meteora DAMM v2 pool whose trading
+    /// fee feeds the treasury. The pool must be governance_mint (token A) /
+    /// treasury_mint (token B) in "fee only in B" mode, and the Config PDA must
+    /// already hold the position NFT. Also fixes the pool's token-A vault as the
+    /// account excluded from the voting base. Cannot be changed afterwards.
+    pub fn register_pool(ctx: Context<RegisterPool>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.owner.key(),
+            ctx.accounts.config.owners_authority,
+            GovError::NotOwner
+        );
+        require!(
+            ctx.accounts.config.fee_pool == Pubkey::default(),
+            GovError::PoolAlreadyRegistered
+        );
 
-        token_interface::harvest_withheld_tokens_to_mint(
-            CpiContext::new(
-                ctx.accounts.token_program.key(),
-                HarvestWithheldTokensToMint {
-                    token_program_id: ctx.accounts.token_program.to_account_info(),
-                    mint: ctx.accounts.governance_mint.to_account_info(),
-                },
-            ),
-            source_accounts,
-        )?;
+        let pool_info = ctx.accounts.pool.to_account_info();
+        require_keys_eq!(*pool_info.owner, METEORA_CP_AMM, GovError::PoolMismatch);
+        let vault_a = {
+            let data = pool_info.try_borrow_data()?;
+            let mint_a = read_key_at(&data, POOL_TOKEN_A_MINT_OFFSET).ok_or(GovError::PoolMismatch)?;
+            let mint_b = read_key_at(&data, POOL_TOKEN_B_MINT_OFFSET).ok_or(GovError::PoolMismatch)?;
+            require_keys_eq!(mint_a, ctx.accounts.config.governance_mint, GovError::PoolMismatch);
+            require_keys_eq!(mint_b, ctx.accounts.config.treasury_mint, GovError::PoolMismatch);
+            require!(
+                data.get(POOL_COLLECT_FEE_MODE_OFFSET) == Some(&COLLECT_FEE_ONLY_B),
+                GovError::PoolMismatch
+            );
+            read_key_at(&data, POOL_TOKEN_A_VAULT_OFFSET).ok_or(GovError::PoolMismatch)?
+        };
 
-        let mint_key = ctx.accounts.governance_mint.key();
-        let seeds: &[&[u8]] = &[b"config", mint_key.as_ref(), &[ctx.accounts.config.bump]];
-        let signer_seeds: &[&[&[u8]]] = &[seeds];
+        let position_info = ctx.accounts.position.to_account_info();
+        require_keys_eq!(*position_info.owner, METEORA_CP_AMM, GovError::PositionMismatch);
+        let nft_mint = {
+            let data = position_info.try_borrow_data()?;
+            let pool_key = read_key_at(&data, POSITION_POOL_OFFSET).ok_or(GovError::PositionMismatch)?;
+            require_keys_eq!(pool_key, ctx.accounts.pool.key(), GovError::PositionMismatch);
+            read_key_at(&data, POSITION_NFT_MINT_OFFSET).ok_or(GovError::PositionMismatch)?
+        };
+        let nft = &ctx.accounts.position_nft_account;
+        require_keys_eq!(nft.mint, nft_mint, GovError::PositionMismatch);
+        require_keys_eq!(nft.owner, ctx.accounts.config.key(), GovError::PositionMismatch);
+        require!(nft.amount == 1, GovError::PositionMismatch);
 
-        token_interface::withdraw_withheld_tokens_from_mint(CpiContext::new_with_signer(
-            ctx.accounts.token_program.key(),
-            WithdrawWithheldTokensFromMint {
-                token_program_id: ctx.accounts.token_program.to_account_info(),
-                mint: ctx.accounts.governance_mint.to_account_info(),
-                destination: ctx.accounts.treasury.to_account_info(),
-                authority: ctx.accounts.config.to_account_info(),
-            },
-            signer_seeds,
-        ))?;
+        let config = &mut ctx.accounts.config;
+        config.fee_pool = ctx.accounts.pool.key();
+        config.fee_position = ctx.accounts.position.key();
+        config.fee_position_nft_account = nft.key();
+        config.quorum_excluded_account = vault_a;
+        Ok(())
+    }
+
+    /// Permissionless: pull the trading fee accrued on the pool position into the
+    /// treasury. The Config PDA owns the position NFT, so it signs the Meteora
+    /// `claim_position_fee` call itself; the destination is hard-wired to the
+    /// treasury account, so whoever calls this can only ever help the treasury.
+    /// Not pause-gated: it is an INFLOW, not a spend.
+    pub fn claim_pool_fees(ctx: Context<ClaimPoolFees>) -> Result<()> {
+        let cfg = &ctx.accounts.config;
+        require!(cfg.fee_pool != Pubkey::default(), GovError::PoolNotRegistered);
+
+        let mint_key = cfg.governance_mint;
+        let seeds: &[&[u8]] = &[b"config", mint_key.as_ref(), &[cfg.bump]];
+
+        let metas = vec![
+            AccountMeta::new_readonly(ctx.accounts.pool_authority.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.pool.key(), false),
+            AccountMeta::new(ctx.accounts.position.key(), false),
+            AccountMeta::new(ctx.accounts.fee_a_account.key(), false),
+            AccountMeta::new(ctx.accounts.treasury.key(), false),
+            AccountMeta::new(ctx.accounts.token_a_vault.key(), false),
+            AccountMeta::new(ctx.accounts.token_b_vault.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.governance_mint.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.treasury_mint.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.position_nft_account.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.config.key(), true),
+            AccountMeta::new_readonly(ctx.accounts.token_a_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.token_b_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.event_authority.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.meteora_program.key(), false),
+        ];
+        let ix = Instruction {
+            program_id: METEORA_CP_AMM,
+            accounts: metas,
+            data: CLAIM_POSITION_FEE_DISC.to_vec(),
+        };
+        let infos = [
+            ctx.accounts.pool_authority.to_account_info(),
+            ctx.accounts.pool.to_account_info(),
+            ctx.accounts.position.to_account_info(),
+            ctx.accounts.fee_a_account.to_account_info(),
+            ctx.accounts.treasury.to_account_info(),
+            ctx.accounts.token_a_vault.to_account_info(),
+            ctx.accounts.token_b_vault.to_account_info(),
+            ctx.accounts.governance_mint.to_account_info(),
+            ctx.accounts.treasury_mint.to_account_info(),
+            ctx.accounts.position_nft_account.to_account_info(),
+            ctx.accounts.config.to_account_info(),
+            ctx.accounts.token_a_program.to_account_info(),
+            ctx.accounts.token_b_program.to_account_info(),
+            ctx.accounts.event_authority.to_account_info(),
+            ctx.accounts.meteora_program.to_account_info(),
+        ];
+        invoke_signed(&ix, &infos, &[seeds])?;
         Ok(())
     }
 
@@ -985,7 +1107,7 @@ pub mod onchain_state_solana {
         ctx.accounts.config.milestone_reserved =
             ctx.accounts.config.milestone_reserved.saturating_sub(share);
 
-        let mint_key = ctx.accounts.governance_mint.key();
+        let mint_key = ctx.accounts.config.governance_mint;
         let seeds: &[&[u8]] = &[b"config", mint_key.as_ref(), &[ctx.accounts.config.bump]];
         let signer_seeds: &[&[&[u8]]] = &[seeds];
 
@@ -994,27 +1116,34 @@ pub mod onchain_state_solana {
                 ctx.accounts.token_program.key(),
                 TransferChecked {
                     from: ctx.accounts.milestone_fund.to_account_info(),
-                    mint: ctx.accounts.governance_mint.to_account_info(),
+                    mint: ctx.accounts.treasury_mint.to_account_info(),
                     to: ctx.accounts.claimant_token_account.to_account_info(),
                     authority: ctx.accounts.config.to_account_info(),
                 },
                 signer_seeds,
             ),
             share,
-            ctx.accounts.governance_mint.decimals,
+            ctx.accounts.treasury_mint.decimals,
         )?;
         Ok(())
     }
 }
 
 // ==================== Accounts ====================
+//
+// Convention: `governance_mint` is the voting coin, `treasury_mint` the asset the
+// treasury holds. Instructions that move money take `treasury_mint` (for the
+// decimals) and `token_program` = the TREASURY asset's token program. Config
+// is derived from the governance mint, stored inside Config.
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         init,
@@ -1023,17 +1152,18 @@ pub struct Initialize<'info> {
         seeds = [b"config", governance_mint.key().as_ref()],
         bump
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     #[account(
         init,
         payer = owner,
-        associated_token::mint = governance_mint,
+        associated_token::mint = treasury_mint,
         associated_token::authority = config,
         associated_token::token_program = token_program,
     )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// Token program of the treasury asset.
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -1052,10 +1182,11 @@ pub struct ClaimSalary<'info> {
     #[account(mut)]
     pub claimant: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
 
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Account<'info, Config>,
+    #[account(address = config.treasury_mint)]
+    pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         init_if_needed,
@@ -1064,18 +1195,13 @@ pub struct ClaimSalary<'info> {
         seeds = [b"payroll", config.key().as_ref(), claimant.key().as_ref()],
         bump
     )]
-    pub payroll_claim: Account<'info, PayrollClaim>,
+    pub payroll_claim: Box<Account<'info, PayrollClaim>>,
 
-    #[account(
-        mut,
-        associated_token::mint = governance_mint,
-        associated_token::authority = config,
-        associated_token::token_program = token_program,
-    )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, address = config.treasury_token_account)]
+    pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut)]
-    pub claimant_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub claimant_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
@@ -1117,6 +1243,10 @@ pub struct CreateProposal<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
 
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(address = config.governance_mint)]
     pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
@@ -1125,15 +1255,12 @@ pub struct CreateProposal<'info> {
     )]
     pub creator_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Box<Account<'info, Config>>,
-
-    #[account(
-        associated_token::mint = governance_mint,
-        associated_token::authority = config,
-        associated_token::token_program = token_program,
-    )]
+    #[account(address = config.treasury_token_account)]
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// The registered pool's governance-coin vault. Required once a pool is
+    /// registered (its balance is excluded from the voting base); omit before.
+    pub quorum_excluded: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 
     #[account(
         init,
@@ -1144,7 +1271,6 @@ pub struct CreateProposal<'info> {
     )]
     pub proposal: Box<Account<'info, Proposal>>,
 
-    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1172,20 +1298,19 @@ pub struct Vote<'info> {
 pub struct ExecuteProposal<'info> {
     pub executor: Signer<'info>, // owners_authority, or president after exec_fallback_secs
 
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(address = config.governance_mint)]
     pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Box<Account<'info, Config>>,
+    #[account(address = config.treasury_mint)]
+    pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut, seeds = [b"proposal", config.key().as_ref(), &proposal_id.to_le_bytes()], bump = proposal.bump)]
     pub proposal: Box<Account<'info, Proposal>>,
 
-    #[account(
-        mut,
-        associated_token::mint = governance_mint,
-        associated_token::authority = config,
-        associated_token::token_program = token_program,
-    )]
+    #[account(mut, address = config.treasury_token_account)]
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Recipient token account — required for SPEND (type 0). Owner is checked
@@ -1197,6 +1322,9 @@ pub struct ExecuteProposal<'info> {
     #[account(mut)]
     pub milestone_fund: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 
+    /// The registered pool's governance-coin vault (required once a pool is registered).
+    pub quorum_excluded: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
+
     pub token_program: Interface<'info, TokenInterface>,
 }
 
@@ -1206,10 +1334,11 @@ pub struct MinisterSpend<'info> {
     #[account(mut)]
     pub minister: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
 
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Account<'info, Config>,
+    #[account(address = config.treasury_mint)]
+    pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         init_if_needed,
@@ -1218,41 +1347,113 @@ pub struct MinisterSpend<'info> {
         seeds = [b"spend_tracker", config.key().as_ref(), &[role]],
         bump
     )]
-    pub spend_tracker: Account<'info, SpendTracker>,
+    pub spend_tracker: Box<Account<'info, SpendTracker>>,
 
-    #[account(
-        mut,
-        associated_token::mint = governance_mint,
-        associated_token::authority = config,
-        associated_token::token_program = token_program,
-    )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, address = config.treasury_token_account)]
+    pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut)]
-    pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub recipient_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct HarvestFees<'info> {
+pub struct RegisterPool<'info> {
     #[account(mut)]
-    pub governance_mint: InterfaceAccount<'info, Mint>,
+    pub owner: Signer<'info>,
 
-    #[account(seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Account<'info, Config>,
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(address = config.governance_mint)]
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// CHECK: a Meteora cp-amm pool; owner program, mints and fee mode are
+    /// verified from its raw data inside register_pool.
+    pub pool: UncheckedAccount<'info>,
+
+    /// CHECK: a Meteora cp-amm position; owner program and pool link are verified.
+    pub position: UncheckedAccount<'info>,
+
+    /// The token account holding the position NFT; its authority must be the Config PDA.
+    pub position_nft_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// Governance-coin account owned by the Config PDA: the (normally empty)
+    /// "token A" destination Meteora's claim instruction insists on.
+    #[account(
+        init_if_needed,
+        payer = owner,
+        associated_token::mint = governance_mint,
+        associated_token::authority = config,
+        associated_token::token_program = governance_token_program,
+    )]
+    pub fee_a_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub governance_token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimPoolFees<'info> {
+    /// Anyone; only pays the transaction fee.
+    pub caller: Signer<'info>,
+
+    #[account(seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(address = config.governance_mint)]
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(address = config.treasury_mint)]
+    pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// The ONLY place the fee can go.
+    #[account(mut, address = config.treasury_token_account)]
+    pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         mut,
         associated_token::mint = governance_mint,
         associated_token::authority = config,
-        associated_token::token_program = token_program,
+        associated_token::token_program = token_a_program,
     )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    pub fee_a_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    pub token_program: Interface<'info, TokenInterface>,
-    // remaining_accounts: token accounts we're collecting the withheld fee from
+    /// CHECK: Meteora pool authority PDA (validated by Meteora).
+    pub pool_authority: UncheckedAccount<'info>,
+
+    /// CHECK: the registered pool.
+    #[account(address = config.fee_pool)]
+    pub pool: UncheckedAccount<'info>,
+
+    /// CHECK: the registered position.
+    #[account(mut, address = config.fee_position)]
+    pub position: UncheckedAccount<'info>,
+
+    /// CHECK: pool vault A (Meteora checks it against the pool).
+    #[account(mut)]
+    pub token_a_vault: UncheckedAccount<'info>,
+
+    /// CHECK: pool vault B (Meteora checks it against the pool).
+    #[account(mut)]
+    pub token_b_vault: UncheckedAccount<'info>,
+
+    /// CHECK: the position NFT account held by the Config PDA.
+    #[account(address = config.fee_position_nft_account)]
+    pub position_nft_account: UncheckedAccount<'info>,
+
+    pub token_a_program: Interface<'info, TokenInterface>,
+    pub token_b_program: Interface<'info, TokenInterface>,
+
+    /// CHECK: cp-amm event authority PDA (validated by Meteora).
+    pub event_authority: UncheckedAccount<'info>,
+
+    /// CHECK: the Meteora cp-amm program.
+    #[account(address = METEORA_CP_AMM)]
+    pub meteora_program: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -1260,15 +1461,16 @@ pub struct SetupMilestoneFund<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Account<'info, Config>,
+
+    #[account(address = config.treasury_mint)]
+    pub treasury_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
         init,
         payer = owner,
-        token::mint = governance_mint,
+        token::mint = treasury_mint,
         token::authority = config,
         token::token_program = token_program,
         seeds = [b"milestone_fund", config.key().as_ref()],
@@ -1285,9 +1487,7 @@ pub struct CreateMilestone<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Account<'info, Config>,
 
     #[account(
@@ -1308,24 +1508,25 @@ pub struct PostMilestoneSnapshot<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
+    #[account(seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
 
-    #[account(seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
-    pub config: Account<'info, Config>,
+    #[account(address = config.governance_mint)]
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         mut,
         seeds = [b"milestone", config.key().as_ref(), &_milestone_number.to_le_bytes()],
         bump = milestone_record.bump
     )]
-    pub milestone_record: Account<'info, MilestoneRecord>,
+    pub milestone_record: Box<Account<'info, MilestoneRecord>>,
 
     /// The holder's real token account — weight is read from here.
     #[account(
         constraint = holder_token_account.mint == config.governance_mint @ GovError::SnapshotAccountMismatch,
         constraint = holder_token_account.owner == holder @ GovError::SnapshotAccountMismatch,
     )]
-    pub holder_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub holder_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         init,
@@ -1334,7 +1535,7 @@ pub struct PostMilestoneSnapshot<'info> {
         seeds = [b"milestone_snap", milestone_record.key().as_ref(), holder.as_ref()],
         bump
     )]
-    pub milestone_snapshot: Account<'info, MilestoneSnapshot>,
+    pub milestone_snapshot: Box<Account<'info, MilestoneSnapshot>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1344,9 +1545,7 @@ pub struct PostMilestoneSnapshot<'info> {
 pub struct FinalizeMilestone<'info> {
     pub owner: Signer<'info>,
 
-    pub governance_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Account<'info, Config>,
 
     #[account(
@@ -1373,8 +1572,6 @@ pub struct FinalizeMilestone<'info> {
         bump
     )]
     pub milestone_fund: InterfaceAccount<'info, TokenAccount>,
-
-    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
@@ -1382,9 +1579,7 @@ pub struct FinalizeMilestone<'info> {
 pub struct ReleaseMilestone<'info> {
     pub owner: Signer<'info>,
 
-    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
-
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
 
     #[account(
@@ -1403,10 +1598,11 @@ pub struct ClaimMilestone<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
-
-    #[account(mut, seeds = [b"config", governance_mint.key().as_ref()], bump = config.bump)]
+    #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
+
+    #[account(address = config.treasury_mint)]
+    pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut, seeds = [b"milestone", config.key().as_ref(), &milestone_number.to_le_bytes()], bump = milestone_record.bump)]
     pub milestone_record: Box<Account<'info, MilestoneRecord>>,
@@ -1427,7 +1623,7 @@ pub struct ClaimMilestone<'info> {
 
     #[account(
         mut,
-        constraint = claimant_token_account.mint == config.governance_mint @ GovError::WrongRecipient,
+        constraint = claimant_token_account.mint == config.treasury_mint @ GovError::WrongRecipient,
         constraint = claimant_token_account.owner == holder @ GovError::WrongRecipient,
     )]
     pub claimant_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -1445,9 +1641,18 @@ pub struct Config {
     pub president: Pubkey,
     pub finance_minister: Pubkey,
     pub culture_minister: Pubkey,
+    /// The state's own voting coin (no transfer tax).
     pub governance_mint: Pubkey,
+    /// The asset the treasury holds (the pool's quote asset: wSOL / USDC / USDT).
+    pub treasury_mint: Pubkey,
     pub treasury_token_account: Pubkey,
     pub milestone_fund_token_account: Pubkey,
+    /// Meteora pool / position / position-NFT account that feed the treasury (zero until register_pool).
+    pub fee_pool: Pubkey,
+    pub fee_position: Pubkey,
+    pub fee_position_nft_account: Pubkey,
+    /// Governance-coin account (the pool vault) excluded from the voting base; zero until register_pool.
+    pub quorum_excluded_account: Pubkey,
     pub voting_period_secs: i64,
     pub proposal_threshold_bps: u64,
     pub quorum_spend_bps: u64,
@@ -1639,6 +1844,16 @@ pub enum GovError {
     MilestoneClosed,
     #[msg("Claim grace period has not elapsed yet")]
     MilestoneGraceNotElapsed,
+    #[msg("Fee pool is already registered")]
+    PoolAlreadyRegistered,
+    #[msg("Fee pool is not registered yet")]
+    PoolNotRegistered,
+    #[msg("Pool is not the governance/treasury pair in fee-only-B mode")]
+    PoolMismatch,
+    #[msg("Position does not belong to this pool or the Config PDA does not hold it")]
+    PositionMismatch,
+    #[msg("The registered pool vault must be passed to compute the voting base")]
+    ExcludedAccountMissing,
 }
 
 /// Milestone N>1 may be finalized only after milestone N-1 is finalized.
@@ -1694,23 +1909,42 @@ mod p0_tests {
     // ---- voting base / quorum ----
 
     #[test]
-    fn voting_base_excludes_treasury() {
+    fn voting_base_excludes_pool_vault() {
         assert_eq!(voting_base(1_000, 400), 600);
-        // treasury bigger than supply can't happen, but must not panic
+        assert_eq!(voting_base(1_000, 0), 1_000); // no pool registered
+        // an excluded balance bigger than supply can't happen, but must not panic
         assert_eq!(voting_base(1_000, 5_000), 0);
     }
 
     #[test]
     fn quorum_boundary() {
-        // circulating base = 1000 - 0 = 1000, quorum 10% => need >= 100
+        // base = 1000 - 0 = 1000, quorum 10% => need >= 100
         assert!(!quorum_met(99, 1_000, 0, 1_000));
         assert!(quorum_met(100, 1_000, 0, 1_000));
-        // tax in treasury lowers the bar: base = 1000 - 500 = 500 => need >= 50
+        // half the coins sit in the pool vault: base = 500 => need >= 50
         assert!(quorum_met(50, 1_000, 500, 1_000));
         assert!(!quorum_met(49, 1_000, 500, 1_000));
     }
 
-    // ---- spend cap ----
+    #[test]
+    fn reads_keys_out_of_foreign_account_data() {
+        let mut data = vec![0u8; 300];
+        let k = Pubkey::new_unique();
+        data[168..200].copy_from_slice(k.as_ref());
+        assert_eq!(read_key_at(&data, POOL_TOKEN_A_MINT_OFFSET), Some(k));
+        assert_eq!(read_key_at(&data, 269), None); // runs past the end
+        assert_eq!(read_key_at(&data, usize::MAX), None); // offset overflow
+        assert_eq!(read_key_at(&[], 0), None);
+    }
+
+    #[test]
+    fn cp_amm_layout_offsets_are_consistent() {
+        // mints and vaults sit back to back (32 bytes each) right after the fee struct
+        assert_eq!(POOL_TOKEN_B_MINT_OFFSET, POOL_TOKEN_A_MINT_OFFSET + 32);
+        assert_eq!(POOL_TOKEN_A_VAULT_OFFSET, POOL_TOKEN_B_MINT_OFFSET + 32);
+        assert_eq!(POOL_TOKEN_B_VAULT_OFFSET, POOL_TOKEN_A_VAULT_OFFSET + 32);
+        assert_eq!(POSITION_NFT_MINT_OFFSET, POSITION_POOL_OFFSET + 32);
+    }
 
     #[test]
     fn spend_cap_is_30pct() {
@@ -1829,8 +2063,13 @@ mod p0_tests {
             finance_minister: Pubkey::default(),
             culture_minister: Pubkey::default(),
             governance_mint: Pubkey::default(),
+            treasury_mint: Pubkey::default(),
             treasury_token_account: Pubkey::default(),
             milestone_fund_token_account: Pubkey::default(),
+            fee_pool: Pubkey::default(),
+            fee_position: Pubkey::default(),
+            fee_position_nft_account: Pubkey::default(),
+            quorum_excluded_account: Pubkey::default(),
             voting_period_secs: 0,
             proposal_threshold_bps: 0,
             quorum_spend_bps: 0,

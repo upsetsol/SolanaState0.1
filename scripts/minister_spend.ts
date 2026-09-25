@@ -5,25 +5,27 @@
 //   GOVERNANCE_MINT=<mint>
 //   KEYPAIR=~/holder-b.json     (the minister's own key)
 //   ROLE=1|2                    (1 = finance, default; 2 = culture)
-//   AMOUNT=<raw>                (default 10000000000000 = 10k @ 9dp)
+//   AMOUNT=<raw>                (raw units of the treasury asset, default 1000000 = 0.001 SOL)
 
 import { SystemProgram } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import {
   anchor,
   getProvider,
   loadProgram,
-  GOVERNANCE_MINT,
+  TREASURY_MINT,
   configPda,
   treasuryAta,
+  treasuryAtaOf,
   spendTrackerPda,
-  ata,
-  TOKEN_PROGRAM,
+  TREASURY_PROGRAM,
+  ATA_PROGRAM,
 } from "./lib/env";
 
 async function main() {
   const role = Number(process.env.ROLE ?? "1");
   if (role !== 1 && role !== 2) throw new Error("ROLE must be 1 (finance) or 2 (culture)");
-  const amount = new anchor.BN(process.env.AMOUNT ?? "10000000000000");
+  const amount = new anchor.BN(process.env.AMOUNT ?? "1000000");
 
   const provider = getProvider();
   const program = loadProgram(provider);
@@ -34,14 +36,17 @@ async function main() {
     .ministerSpend(role, amount, "Test minister spend")
     .accounts({
       minister,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
+      treasuryMint: TREASURY_MINT,
       spendTracker: spendTrackerPda(role),
       treasury: treasuryAta(),
-      recipientTokenAccount: ata(minister),
-      tokenProgram: TOKEN_PROGRAM,
+      recipientTokenAccount: treasuryAtaOf(minister),
+      tokenProgram: TREASURY_PROGRAM,
       systemProgram: SystemProgram.programId,
     })
+    .preInstructions([
+      createAssociatedTokenAccountIdempotentInstruction(minister, treasuryAtaOf(minister), minister, TREASURY_MINT, TREASURY_PROGRAM, ATA_PROGRAM),
+    ])
     .rpc();
 
   console.log("minister_spend tx:", tx);

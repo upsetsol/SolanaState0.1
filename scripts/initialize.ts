@@ -1,8 +1,9 @@
 // initialize Config + treasury.
 //
-//   GOVERNANCE_MINT=<mint>            (required — see scripts/create_mint.ts)
-//   OWNERS_AUTHORITY=<squads vault>   (required — posts snapshots, executes proposals)
-//   ADMIN_AUTHORITY=<key/multisig>    (required — pause + citizenship threshold)
+//   GOVERNANCE_MINT=<mint>            (required — the voting coin, see scripts/create_mint.ts)
+//   TREASURY_MINT=<mint>              (optional — asset of the treasury, default wSOL; USDC/USDT possible)
+//   OWNERS_AUTHORITY=<pubkey>         (required — posts snapshots, executes proposals)
+//   ADMIN_AUTHORITY=<pubkey>          (required — pause + citizenship threshold)
 //   PRESIDENT=<pubkey>                (optional — defaults to the fee payer)
 //   PARAMS=test|prod                  (test is rejected on a mainnet RPC)
 //
@@ -14,17 +15,18 @@ import {
   getProvider,
   loadProgram,
   GOVERNANCE_MINT,
+  TREASURY_MINT,
   PROGRAM_ID,
   configPda,
   treasuryAta,
-  TOKEN_PROGRAM,
+  TREASURY_PROGRAM,
   ATA_PROGRAM,
 } from "./lib/env";
 import { resolveParams } from "./params";
 
 async function main() {
   if (!process.env.OWNERS_AUTHORITY) {
-    throw new Error("Set OWNERS_AUTHORITY to the Squads vault pubkey.");
+    throw new Error("Set OWNERS_AUTHORITY to the owner pubkey.");
   }
   if (!process.env.ADMIN_AUTHORITY) {
     throw new Error("Set ADMIN_AUTHORITY (break-glass pause + citizenship threshold).");
@@ -44,6 +46,8 @@ async function main() {
   console.log("RPC:", rpcUrl || "(from Anchor provider)");
   console.log("Profile:", profile);
   console.log("Config PDA:", configPda().toBase58());
+  console.log("Governance mint:", GOVERNANCE_MINT.toBase58());
+  console.log("Treasury asset:", TREASURY_MINT.toBase58());
   console.log("Treasury ATA:", treasuryAta().toBase58());
   console.log("owners_authority:", ownersAuthority.toBase58());
   console.log("admin_authority:", adminAuthority.toBase58());
@@ -76,9 +80,10 @@ async function main() {
     .accounts({
       owner: provider.wallet.publicKey,
       governanceMint: GOVERNANCE_MINT,
+      treasuryMint: TREASURY_MINT,
       config: configPda(),
       treasury: treasuryAta(),
-      tokenProgram: TOKEN_PROGRAM,
+      tokenProgram: TREASURY_PROGRAM,
       associatedTokenProgram: ATA_PROGRAM,
       systemProgram: SystemProgram.programId,
     })

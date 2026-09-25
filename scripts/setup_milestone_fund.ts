@@ -8,10 +8,10 @@ import { SystemProgram } from "@solana/web3.js";
 import {
   getProvider,
   loadProgram,
-  GOVERNANCE_MINT,
+  TREASURY_MINT,
   configPda,
   milestoneFundPda,
-  TOKEN_PROGRAM,
+  TREASURY_PROGRAM,
 } from "./lib/env";
 
 async function main() {
@@ -22,10 +22,10 @@ async function main() {
     .setupMilestoneFund()
     .accounts({
       owner: provider.wallet.publicKey,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
+      treasuryMint: TREASURY_MINT,
       milestoneFund: milestoneFundPda(),
-      tokenProgram: TOKEN_PROGRAM,
+      tokenProgram: TREASURY_PROGRAM,
       systemProgram: SystemProgram.programId,
     })
     .rpc();

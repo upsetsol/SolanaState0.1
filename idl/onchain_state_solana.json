@@ -36,9 +36,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -56,10 +53,14 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
+        },
+        {
+          "name": "treasury_mint"
         },
         {
           "name": "milestone_record",
@@ -177,35 +178,34 @@
       ]
     },
     {
-      "name": "claim_salary",
+      "name": "claim_pool_fees",
       "docs": [
-        "Claim salary for a role — once a day, a fixed % of the MORNING treasury",
-        "snapshot (not the live balance). Does not use up minister_spend's",
-        "daily/weekly limit — this is separate, guaranteed income for holding",
-        "the role."
+        "Permissionless: pull the trading fee accrued on the pool position into the",
+        "treasury. The Config PDA owns the position NFT, so it signs the Meteora",
+        "`claim_position_fee` call itself; the destination is hard-wired to the",
+        "treasury account, so whoever calls this can only ever help the treasury.",
+        "Not pause-gated: it is an INFLOW, not a spend."
       ],
       "discriminator": [
-        253,
-        112,
-        47,
-        40,
-        140,
-        213,
-        22,
-        141
+        33,
+        187,
+        125,
+        186,
+        41,
+        247,
+        236,
+        89
       ],
       "accounts": [
         {
-          "name": "claimant",
-          "writable": true,
+          "name": "caller",
+          "docs": [
+            "Anyone; only pays the transaction fee."
+          ],
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -221,41 +221,27 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
         },
         {
-          "name": "payroll_claim",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  121,
-                  114,
-                  111,
-                  108,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "config"
-              },
-              {
-                "kind": "account",
-                "path": "claimant"
-              }
-            ]
-          }
+          "name": "governance_mint"
+        },
+        {
+          "name": "treasury_mint"
         },
         {
           "name": "treasury",
+          "docs": [
+            "The ONLY place the fee can go."
+          ],
+          "writable": true
+        },
+        {
+          "name": "fee_a_account",
           "writable": true,
           "pda": {
             "seeds": [
@@ -265,7 +251,7 @@
               },
               {
                 "kind": "account",
-                "path": "token_program"
+                "path": "token_a_program"
               },
               {
                 "kind": "account",
@@ -312,6 +298,126 @@
           }
         },
         {
+          "name": "pool_authority"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "token_a_vault",
+          "writable": true
+        },
+        {
+          "name": "token_b_vault",
+          "writable": true
+        },
+        {
+          "name": "position_nft_account"
+        },
+        {
+          "name": "token_a_program"
+        },
+        {
+          "name": "token_b_program"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "meteora_program",
+          "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_salary",
+      "docs": [
+        "Claim salary for a role — once a day, a fixed % of the MORNING treasury",
+        "snapshot (not the live balance). Does not use up minister_spend's",
+        "daily/weekly limit — this is separate, guaranteed income for holding",
+        "the role."
+      ],
+      "discriminator": [
+        253,
+        112,
+        47,
+        40,
+        140,
+        213,
+        22,
+        141
+      ],
+      "accounts": [
+        {
+          "name": "claimant",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_mint"
+        },
+        {
+          "name": "payroll_claim",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  114,
+                  111,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "claimant"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
           "name": "claimant_token_account",
           "writable": true
         },
@@ -349,9 +455,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -369,7 +472,8 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
@@ -416,7 +520,7 @@
       "name": "create_proposal",
       "docs": [
         "Create a proposal. Unlike voting, the creation threshold reads the",
-        "creator's LIVE balance against the circulating base (supply - treasury)",
+        "creator's LIVE balance against the voting base (supply - pool vault)",
         "— deliberately fine, because creating a proposal doesn't execute",
         "anything, it just opens a discussion.",
         "proposal_type: 0=SPEND 1=ChangePresident 2=AppointFinance",
@@ -440,12 +544,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
-          "name": "creator_token_account"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -463,66 +561,28 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
         },
         {
-          "name": "treasury",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "config"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "governance_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
+          "name": "governance_mint"
+        },
+        {
+          "name": "creator_token_account"
+        },
+        {
+          "name": "treasury"
+        },
+        {
+          "name": "quorum_excluded",
+          "docs": [
+            "The registered pool's governance-coin vault. Required once a pool is",
+            "registered (its balance is excluded from the voting base); omit before."
+          ],
+          "optional": true
         },
         {
           "name": "proposal",
@@ -553,9 +613,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "token_program"
         },
         {
           "name": "system_program",
@@ -609,9 +666,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -629,10 +683,17 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "treasury_mint"
         },
         {
           "name": "proposal",
@@ -665,60 +726,7 @@
         },
         {
           "name": "treasury",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "config"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "governance_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
+          "writable": true
         },
         {
           "name": "recipient_token_account",
@@ -735,6 +743,13 @@
             "The Milestone Fund — required for DEPOSIT_TO_MILESTONE_FUND (type 6)."
           ],
           "writable": true,
+          "optional": true
+        },
+        {
+          "name": "quorum_excluded",
+          "docs": [
+            "The registered pool's governance-coin vault (required once a pool is registered)."
+          ],
           "optional": true
         },
         {
@@ -771,9 +786,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -791,7 +803,8 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
@@ -889,9 +902,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "token_program"
         }
       ],
       "args": [
@@ -902,116 +912,11 @@
       ]
     },
     {
-      "name": "harvest_fees",
-      "docs": [
-        "Permissionless \"cleanup\" — collects the Token-2022 transfer-fee tax",
-        "that piled up on the given accounts and sweeps it into the treasury.",
-        "Not pause-gated: this is an INFLOW to the treasury, not a spend."
-      ],
-      "discriminator": [
-        90,
-        149,
-        158,
-        241,
-        163,
-        186,
-        155,
-        202
-      ],
-      "accounts": [
-        {
-          "name": "governance_mint",
-          "writable": true
-        },
-        {
-          "name": "config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "governance_mint"
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasury",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "config"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "governance_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
-        },
-        {
-          "name": "token_program"
-        }
-      ],
-      "args": []
-    },
-    {
       "name": "initialize",
       "docs": [
-        "Sets up Config + treasury (an ATA of governance_mint, owned by the Config PDA).",
+        "Sets up Config + treasury (an ATA of treasury_mint, owned by the Config PDA).",
+        "governance_mint = the voting coin, treasury_mint = the asset the pool pays",
+        "its fee in (wSOL / USDC / USDT). `token_program` is the treasury asset's program.",
         "`owners_authority` (typically a Squads vault) posts vote snapshots and",
         "executes proposals. `admin_authority` (a separate key/multisig) can pause",
         "treasury outflows and tune the citizenship threshold. The payer signs and",
@@ -1037,6 +942,9 @@
           "name": "governance_mint"
         },
         {
+          "name": "treasury_mint"
+        },
+        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -1074,7 +982,7 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "treasury_mint"
               }
             ],
             "program": {
@@ -1117,7 +1025,10 @@
           }
         },
         {
-          "name": "token_program"
+          "name": "token_program",
+          "docs": [
+            "Token program of the treasury asset."
+          ]
         },
         {
           "name": "associated_token_program",
@@ -1241,9 +1152,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -1261,10 +1169,14 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
+        },
+        {
+          "name": "treasury_mint"
         },
         {
           "name": "spend_tracker",
@@ -1272,60 +1184,7 @@
         },
         {
           "name": "treasury",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "config"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "governance_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
+          "writable": true
         },
         {
           "name": "recipient_token_account",
@@ -1377,9 +1236,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "pda": {
             "seeds": [
@@ -1396,10 +1252,14 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
+        },
+        {
+          "name": "governance_mint"
         },
         {
           "name": "milestone_record",
@@ -1623,6 +1483,148 @@
       ]
     },
     {
+      "name": "register_pool",
+      "docs": [
+        "One-time (owners_authority): link the Meteora DAMM v2 pool whose trading",
+        "fee feeds the treasury. The pool must be governance_mint (token A) /",
+        "treasury_mint (token B) in \"fee only in B\" mode, and the Config PDA must",
+        "already hold the position NFT. Also fixes the pool's token-A vault as the",
+        "account excluded from the voting base. Cannot be changed afterwards."
+      ],
+      "discriminator": [
+        85,
+        229,
+        114,
+        47,
+        75,
+        145,
+        166,
+        100
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "pool",
+          "docs": [
+            "verified from its raw data inside register_pool."
+          ]
+        },
+        {
+          "name": "position"
+        },
+        {
+          "name": "position_nft_account",
+          "docs": [
+            "The token account holding the position NFT; its authority must be the Config PDA."
+          ]
+        },
+        {
+          "name": "fee_a_account",
+          "docs": [
+            "Governance-coin account owned by the Config PDA: the (normally empty)",
+            "\"token A\" destination Meteora's claim instruction insists on."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "governance_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "governance_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "governance_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "release_milestone_reserve",
       "docs": [
         "Closes a milestone after the claim grace period: whatever was promised",
@@ -1646,9 +1648,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -1666,7 +1665,8 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
@@ -1838,9 +1838,6 @@
           "signer": true
         },
         {
-          "name": "governance_mint"
-        },
-        {
           "name": "config",
           "writable": true,
           "pda": {
@@ -1858,10 +1855,14 @@
               },
               {
                 "kind": "account",
-                "path": "governance_mint"
+                "path": "config.governance_mint",
+                "account": "Config"
               }
             ]
           }
+        },
+        {
+          "name": "treasury_mint"
         },
         {
           "name": "milestone_fund",
@@ -2328,6 +2329,31 @@
       "code": 6041,
       "name": "MilestoneGraceNotElapsed",
       "msg": "Claim grace period has not elapsed yet"
+    },
+    {
+      "code": 6042,
+      "name": "PoolAlreadyRegistered",
+      "msg": "Fee pool is already registered"
+    },
+    {
+      "code": 6043,
+      "name": "PoolNotRegistered",
+      "msg": "Fee pool is not registered yet"
+    },
+    {
+      "code": 6044,
+      "name": "PoolMismatch",
+      "msg": "Pool is not the governance/treasury pair in fee-only-B mode"
+    },
+    {
+      "code": 6045,
+      "name": "PositionMismatch",
+      "msg": "Position does not belong to this pool or the Config PDA does not hold it"
+    },
+    {
+      "code": 6046,
+      "name": "ExcludedAccountMissing",
+      "msg": "The registered pool vault must be passed to compute the voting base"
     }
   ],
   "types": [
@@ -2358,6 +2384,16 @@
           },
           {
             "name": "governance_mint",
+            "docs": [
+              "The state's own voting coin (no transfer tax)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury_mint",
+            "docs": [
+              "The asset the treasury holds (the pool's quote asset: wSOL / USDC / USDT)."
+            ],
             "type": "pubkey"
           },
           {
@@ -2366,6 +2402,28 @@
           },
           {
             "name": "milestone_fund_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_pool",
+            "docs": [
+              "Meteora pool / position / position-NFT account that feed the treasury (zero until register_pool)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_position",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_position_nft_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "quorum_excluded_account",
+            "docs": [
+              "Governance-coin account (the pool vault) excluded from the voting base; zero until register_pool."
+            ],
             "type": "pubkey"
           },
           {

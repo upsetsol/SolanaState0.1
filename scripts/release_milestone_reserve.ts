@@ -5,7 +5,7 @@
 //   GOVERNANCE_MINT=<mint>
 //   MILESTONE=1
 
-import { anchor, getProvider, loadProgram, GOVERNANCE_MINT, configPda, milestonePda } from "./lib/env";
+import { anchor, getProvider, loadProgram, configPda, milestonePda } from "./lib/env";
 
 async function main() {
   const n = new anchor.BN(process.env.MILESTONE ?? "1");
@@ -16,7 +16,6 @@ async function main() {
     .releaseMilestoneReserve(n)
     .accounts({
       owner: provider.wallet.publicKey,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
       milestoneRecord: milestonePda(n),
     })

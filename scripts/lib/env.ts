@@ -2,10 +2,13 @@
 //
 // PROGRAM_ID берётся из IDL (target/idl/...json -> "address"), чтобы после
 // `anchor build` с новым keypair'ом ничего не пришлось править руками.
-// GOVERNANCE_MINT — только из переменной окружения (создаётся при деплое,
-// см. scripts/create_mint.ts). Дефолта нет специально.
+// GOVERNANCE_MINT — монета государства (голосование), только из переменной
+// окружения (создаётся при деплое, см. scripts/create_mint.ts). Дефолта нет специально.
+// TREASURY_MINT — актив казны (парный актив пула Meteora). По умолчанию wSOL;
+// для USDC/USDT задайте TREASURY_MINT=<mint> (обычный Token Program).
 //
 //   export GOVERNANCE_MINT=<mint>
+//   export TREASURY_MINT=<mint>     # необязательно, по умолчанию wSOL
 //   export ANCHOR_PROVIDER_URL=https://api.devnet.solana.com
 //   export ANCHOR_WALLET=~/.config/solana/id.json
 
@@ -13,6 +16,8 @@ import * as anchor from "@coral-xyz/anchor";
 import { PublicKey, Keypair, SystemProgram, Connection } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
@@ -21,8 +26,13 @@ import * as os from "os";
 
 import { readIdl } from "./idl";
 export { readIdl, IDL_PATH } from "./idl";
+/** Token program of the GOVERNANCE coin (Token-2022: metadata extension, no transfer tax). */
 export const TOKEN_PROGRAM = TOKEN_2022_PROGRAM_ID;
+/** Token program of the TREASURY asset (wSOL / USDC / USDT are classic SPL tokens). */
+export const TREASURY_PROGRAM = TOKEN_PROGRAM_ID;
 export const ATA_PROGRAM = ASSOCIATED_TOKEN_PROGRAM_ID;
+/** Meteora DAMM v2 (cp-amm). */
+export const METEORA_CP_AMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 
 function requireEnv(key: string): string {
   const v = process.env[key];
@@ -34,6 +44,14 @@ export const PROGRAM_ID = new PublicKey(
   process.env.PROGRAM_ID || readIdl().address
 );
 export const GOVERNANCE_MINT = new PublicKey(requireEnv("GOVERNANCE_MINT"));
+export const TREASURY_MINT = process.env.TREASURY_MINT ? new PublicKey(process.env.TREASURY_MINT) : NATIVE_MINT;
+
+/** "1.5" + 9 decimals -> 1500000000n (exact, no floating point). */
+export function parseUnits(text: string, decimals: number): bigint {
+  const [whole, frac = ""] = text.trim().split(".");
+  if (!/^\d+$/.test(whole) || (frac && !/^\d+$/.test(frac)) || frac.length > decimals) throw new Error(`bad amount "${text}" for ${decimals} decimals`);
+  return BigInt(whole) * 10n ** BigInt(decimals) + BigInt((frac + "0".repeat(decimals)).slice(0, decimals) || "0");
+}
 
 export function expandHome(p: string): string {
   return p.startsWith("~") ? p.replace("~", os.homedir()) : p;
@@ -76,16 +94,22 @@ export function configPda(): PublicKey {
   )[0];
 }
 
+/** The treasury: an ATA of the treasury asset owned by the Config PDA. */
 export function treasuryAta(): PublicKey {
-  return getAssociatedTokenAddressSync(
-    GOVERNANCE_MINT,
-    configPda(),
-    true,
-    TOKEN_2022_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  return getAssociatedTokenAddressSync(TREASURY_MINT, configPda(), true, TREASURY_PROGRAM, ASSOCIATED_TOKEN_PROGRAM_ID);
 }
 
+/** A wallet's account for the TREASURY asset (salaries, spends and payouts arrive here). */
+export function treasuryAtaOf(owner: PublicKey): PublicKey {
+  return getAssociatedTokenAddressSync(TREASURY_MINT, owner, true, TREASURY_PROGRAM, ASSOCIATED_TOKEN_PROGRAM_ID);
+}
+
+/** Config-owned governance-coin account Meteora's claim needs as the (empty) "token A" destination. */
+export function feeAAccount(): PublicKey {
+  return getAssociatedTokenAddressSync(GOVERNANCE_MINT, configPda(), true, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+}
+
+/** A wallet's GOVERNANCE-coin account (vote weight is read from it). */
 export function ata(owner: PublicKey): PublicKey {
   return getAssociatedTokenAddressSync(
     GOVERNANCE_MINT,
@@ -94,6 +118,26 @@ export function ata(owner: PublicKey): PublicKey {
     TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
+}
+
+// ---------------- Meteora DAMM v2 helpers ----------------
+
+export const METEORA_POOL_AUTHORITY = new PublicKey("HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC");
+export const METEORA_EVENT_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], METEORA_CP_AMM)[0];
+
+/** cp-amm position account of a position NFT mint. */
+export function meteoraPositionPda(nftMint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("position"), nftMint.toBuffer()], METEORA_CP_AMM)[0];
+}
+/** cp-amm token account that holds the position NFT (its token authority = the position owner). */
+export function meteoraPositionNftAccountPda(nftMint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("position_nft_account"), nftMint.toBuffer()], METEORA_CP_AMM)[0];
+}
+/** Token vaults of a cp-amm pool, read from its raw data (offsets 232 / 264). */
+export async function readPoolVaults(connection: Connection, pool: PublicKey): Promise<{ vaultA: PublicKey; vaultB: PublicKey }> {
+  const info = await connection.getAccountInfo(pool, "confirmed");
+  if (!info) throw new Error("pool account not found: " + pool.toBase58());
+  return { vaultA: new PublicKey(info.data.subarray(232, 264)), vaultB: new PublicKey(info.data.subarray(264, 296)) };
 }
 
 export function milestoneFundPda(): PublicKey {
@@ -147,6 +191,12 @@ export function milestoneSnapPda(milestone: PublicKey, holder: PublicKey): Publi
 
 // ---------------- High-level helpers ----------------
 
+/** The pool vault excluded from the voting base (null until register_pool). */
+export function excludedAccountOf(cfg: any): PublicKey | null {
+  const k: PublicKey = cfg.quorumExcludedAccount;
+  return k && !k.equals(PublicKey.default) ? k : null;
+}
+
 export type ProposalType =
   | 0 // SPEND
   | 1 // ChangePresident
@@ -182,12 +232,12 @@ export async function createProposal(
     )
     .accounts({
       creator: me,
+      config: configPda(),
       governanceMint: GOVERNANCE_MINT,
       creatorTokenAccount: ata(me),
-      config: configPda(),
       treasury: treasuryAta(),
+      quorumExcluded: excludedAccountOf(cfg),
       proposal: pda,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .rpc();
@@ -250,17 +300,20 @@ export async function executeProposal(
   proposalId: anchor.BN | number | bigint | string,
   opts: { recipient?: PublicKey; milestoneFund?: boolean } = {}
 ): Promise<string> {
+  const cfg = await program.account.config.fetch(configPda());
   return program.methods
     .executeProposal(new anchor.BN(proposalId.toString()))
     .accounts({
       executor: ownerProvider.wallet.publicKey,
-      governanceMint: GOVERNANCE_MINT,
       config: configPda(),
+      governanceMint: GOVERNANCE_MINT,
+      treasuryMint: TREASURY_MINT,
       proposal: proposalPda(proposalId),
       treasury: treasuryAta(),
       recipientTokenAccount: opts.recipient ?? null,
       milestoneFund: opts.milestoneFund ? milestoneFundPda() : null,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      quorumExcluded: excludedAccountOf(cfg),
+      tokenProgram: TREASURY_PROGRAM,
     })
     .rpc();
 }
