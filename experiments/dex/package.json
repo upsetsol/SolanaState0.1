@@ -1,0 +1,18 @@
+{
+  "name": "dex-experiments",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Isolated experiments: our Token-2022 (5% transfer fee) token on Meteora DAMM v2 and DLMM (devnet)",
+  "dependencies": {
+    "@meteora-ag/cp-amm-sdk": "^1.4.10",
+    "@meteora-ag/dlmm": "^1.9.14",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "bn.js": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.0"
+  }
+}
