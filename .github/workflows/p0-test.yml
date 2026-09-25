@@ -3,6 +3,8 @@ name: p0-tests
 
 on:
   push:
+    branches: [main, pool-fees]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
