@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { useApp } from "../lib/ctx";
-import { BN, TP, fmtDur, fmtRaw, pk, short, tsFmt } from "../lib/chain";
+import { ATAP, BN, TPT, fmtDur, fmtRaw, pk, short, tsFmt } from "../lib/chain";
 import { Badge, Btn, Card, Copy, Field, Kv, Note, TextIn } from "../lib/ui";
 
 export default function Milestones() {
@@ -28,14 +29,14 @@ export default function Milestones() {
   }, [P?.config.toBase58(), next, data.now > 0 ? Math.floor(data.now / 6) : 0]);
 
   if (!mint || !c) return <Note kind="warn">Сначала запустите государство (вкладка «Настройка»).</Note>;
-  const dec = data.mintInfo!.decimals;
+  const dec = data.treasuryDecimals; // fund and payouts are in the treasury asset
   const noFund = c.milestoneFundTokenAccount.equals(PublicKey.default);
 
   const create = () =>
     run("Создать веху", () =>
       program.methods
         .createMilestone()
-        .accounts({ owner: active!.publicKey, governanceMint: mint, config: P!.config, milestoneRecord: P!.milestone(next), systemProgram: SystemProgram.programId })
+        .accounts({ owner: active!.publicKey, config: P!.config, milestoneRecord: P!.milestone(next), systemProgram: SystemProgram.programId })
         .rpc(rpcOpts())
     );
 
@@ -60,7 +61,8 @@ export default function Milestones() {
 function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any; snaps: any[] }) {
   const { data, active, run, program, rpcOpts, P, mint, scanHolders } = useApp();
   const c = data.config;
-  const dec = data.mintInfo!.decimals;
+  const dec = data.treasuryDecimals; // pool, shares and payouts: treasury asset
+  const gdec = data.mintInfo!.decimals; // holders' weights: the voting coin
   const [who, setWho] = useState("");
   const [claimTo, setClaimTo] = useState("");
   const pool = (BigInt(d.fundSnapshotAmount.toString()) * BigInt(d.payoutBps.toString())) / 10000n;
@@ -75,7 +77,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
     program.methods
       .postMilestoneSnapshot(new BN(n), holder)
       .accounts({
-        owner: active!.publicKey, governanceMint: mint!, config: P!.config, milestoneRecord: pda,
+        owner: active!.publicKey, config: P!.config, governanceMint: mint!, milestoneRecord: pda,
         holderTokenAccount: P!.ata(holder), milestoneSnapshot: P!.mSnap(pda, holder), systemProgram: SystemProgram.programId,
       })
       .rpc(rpcOpts());
@@ -87,7 +89,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
     if (!eligible.length) { alert("Подходящих держателей не найдено."); return; }
     for (const h of eligible) {
       if (snaps.some((s) => s.account.holder.equals(h.owner))) continue;
-      const r = await run(`Снимок гражданина ${short(h.owner)} (${fmtRaw(h.amount, dec)})`, () => snap(h.owner));
+      const r = await run(`Снимок гражданина ${short(h.owner)} (${fmtRaw(h.amount, gdec)})`, () => snap(h.owner));
       if (!r.ok) break;
     }
   };
@@ -97,8 +99,8 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
       program.methods
         .finalizeMilestone(new BN(n))
         .accounts({
-          owner: active!.publicKey, governanceMint: mint!, config: P!.config, milestoneRecord: pda,
-          previousMilestone: n > 1 ? P!.milestone(n - 1) : null, milestoneFund: P!.milestoneFund, tokenProgram: TP,
+          owner: active!.publicKey, config: P!.config, milestoneRecord: pda,
+          previousMilestone: n > 1 ? P!.milestone(n - 1) : null, milestoneFund: P!.milestoneFund,
         })
         .rpc(rpcOpts())
     );
@@ -107,7 +109,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
     run(`Вернуть остаток вехи №${n} в фонд`, () =>
       program.methods
         .releaseMilestoneReserve(new BN(n))
-        .accounts({ owner: active!.publicKey, governanceMint: mint!, config: P!.config, milestoneRecord: pda })
+        .accounts({ owner: active!.publicKey, config: P!.config, milestoneRecord: pda })
         .rpc(rpcOpts())
     );
 
@@ -116,9 +118,12 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
       program.methods
         .claimMilestone(new BN(n), holder)
         .accounts({
-          payer: active!.publicKey, governanceMint: mint!, config: P!.config, milestoneRecord: pda,
-          milestoneSnapshot: P!.mSnap(pda, holder), milestoneFund: P!.milestoneFund, claimantTokenAccount: P!.ata(holder), tokenProgram: TP,
+          payer: active!.publicKey, config: P!.config, treasuryMint: P!.treasuryMint, milestoneRecord: pda,
+          milestoneSnapshot: P!.mSnap(pda, holder), milestoneFund: P!.milestoneFund, claimantTokenAccount: P!.tAta(holder), tokenProgram: TPT,
         })
+        .preInstructions([
+          createAssociatedTokenAccountIdempotentInstruction(active!.publicKey, P!.tAta(holder), holder, P!.treasuryMint, TPT, ATAP),
+        ])
         .rpc(rpcOpts())
     );
 
@@ -129,7 +134,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
       <div className="kvs">
         <Kv k="Доля выплаты" v={`${Number(d.payoutBps.toString()) / 100}% от свободной части фонда`} />
         <Kv k="Граждан в снимках" v={snaps.length} />
-        <Kv k="Суммарный вес" v={fmtRaw(total, dec)} />
+        <Kv k="Суммарный вес" v={fmtRaw(total, gdec)} />
         <Kv k="Пул к выплате" v={d.finalized ? fmtRaw(pool, dec) : "определится при закрытии"} />
         <Kv k="Уже выплачено" v={fmtRaw(d.claimedAmount, dec)} />
         <Kv k="Закрыта" v={d.finalized ? tsFmt(finAt) : "—"} />
@@ -160,7 +165,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
               return (
                 <tr key={s.publicKey.toBase58()}>
                   <td><Copy text={s.account.holder.toBase58()}>{short(s.account.holder)}</Copy></td>
-                  <td>{fmtRaw(w, dec)}</td>
+                  <td>{fmtRaw(w, gdec)}</td>
                   <td>{d.finalized ? fmtRaw(share, dec) : "—"}</td>
                   <td>{s.account.claimed ? <Badge kind="ok">выплачено</Badge> : <Badge>ждёт</Badge>}</td>
                   <td><Btn onClick={() => pay(s.account.holder)} disabled={!active || !d.finalized}>Выплатить</Btn></td>

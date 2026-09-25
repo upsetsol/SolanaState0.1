@@ -1,3 +1,5 @@
+import { execSync } from "child_process";
+import fs from "fs";
 import { start, make, summary } from "./lib.mjs";
 const { b, p } = await start();
 const t = make(p);
@@ -26,7 +28,7 @@ const createProposal = async ({ type = 0, amount, target, reason, param }) => {
   await p.locator('label.field:has(span:text-is("Тип")) select').selectOption(String(type));
   if (target) await t.fill("Адрес", target);
   if (param !== undefined) await p.locator('label.field:has(span:text-is("Параметр")) select').selectOption(String(param));
-  if (amount !== undefined) await p.locator('label.field:has(span:text-is("Сумма, токенов")) input, label.field:has(span:text-is("Новое значение (число)")) input').first().fill(String(amount));
+  if (amount !== undefined) await p.locator('label.field:has(span:text-is("Сумма, SOL")) input, label.field:has(span:text-is("Новое значение (число)")) input').first().fill(String(amount));
   await t.fill("Причина / описание", reason);
   return t.act("Создать");
 };
@@ -38,7 +40,7 @@ try {
   await t.setActive(0);
   t.expectOk("создать токен", await t.act("Создать токен"));
   t.expectOk("инициализировать государство", await t.act("Инициализировать"));
-  t.expectOk("стартовая казна 5%", await t.act("Перевести в казну"));
+  t.expectOk("положить 0.5 SOL в казну (wSOL)", await t.act("Перевести в казну"));
   t.expectOk("создать фонд вех", await t.act("Создать фонд вех"));
   const amounts = ["80000000", "20000000", "4000000"];
   for (let i = 0; i < 3; i++) {
@@ -49,8 +51,8 @@ try {
   const pks = await t.pubkeys();
 
   // ---------- two SPEND proposals ----------
-  t.expectOk("создать предложение #0 (трата 1 000 000)", await createProposal({ amount: 1000000, reason: "spend one" }));
-  t.expectOk("создать предложение #1 (трата 2 000 000)", await createProposal({ amount: 2000000, reason: "spend two" }));
+  t.expectOk("создать предложение #0 (трата 0.05 SOL)", await createProposal({ amount: 0.05, reason: "spend one" }));
+  t.expectOk("создать предложение #1 (трата 0.02 SOL)", await createProposal({ amount: 0.02, reason: "spend two" }));
   t.check("оба предложения видны в списке", (await p.locator(".prop").count()) === 2);
   await snapAll(0); await snapAll(1);
   t.check("снимки внесены (4 холдера × 2)", (await t.rows().filter({ hasText: "Снимок для" }).count()) >= 8, `строк журнала: ${await t.rows().filter({ hasText: "Снимок для" }).count()}`);
@@ -98,12 +100,12 @@ try {
   await t.setActive(2); await t.tab("Деньги");
   t.expectOk("зарплата министра финансов", await t.act("Забрать зарплату"));
   t.expectErr("вторая зарплата в тот же день → PayrollTooSoon", await t.act("Забрать зарплату"), "PayrollTooSoon");
-  await t.fill("Сумма, токенов", "1000");
+  await t.fill("Сумма, SOL", "0.001");
   t.expectOk("трата министра в пределах лимита", await t.act("Потратить"));
-  await t.fill("Сумма, токенов", "5000000");
+  await t.fill("Сумма, SOL", "0.05");
   t.expectErr("трата сверх дневного лимита → ExceedsDailyLimit", await t.act("Потратить"), "ExceedsDailyLimit");
   await t.setActive(1); await t.tab("Деньги");
-  await t.fill("Сумма, токенов", "1000");
+  await t.fill("Сумма, SOL", "0.001");
   t.expectErr("W2 без роли пробует потратить → NotMinister", await t.act("Потратить"), "NotMinister");
 
   // ---------- pause ----------
@@ -118,7 +120,7 @@ try {
 
   // ---------- milestone ----------
   await p.waitForTimeout(3000);
-  t.expectOk("создать: пополнить фонд вех 1 000 000", await createProposal({ type: 6, amount: 1000000, reason: "fund milestone" }));
+  t.expectOk("создать: пополнить фонд вех 0.03 SOL", await createProposal({ type: 6, amount: 0.03, reason: "fund milestone" }));
   await snapAll(4);
   await voteAs(0, 4, true); await voteAs(1, 4, true);
   t.check("#4 дошло до исполнения", await waitText(card(4), /Готово к исполнению/));
@@ -137,13 +139,37 @@ try {
   t.expectOk("вернуть остаток в фонд после срока", await t.act("Вернуть невыплаченный остаток в фонд"));
   t.expectErr("выплата по закрытой вехе → MilestoneClosed", await t.act("Выплатить", { nth: 1 }), "MilestoneClosed");
 
-  // ---------- harvest ----------
-  await t.tab("Деньги");
-  await p.getByRole("button", { name: "Найти налог", exact: true }).click();
-  await p.waitForTimeout(3000);
-  const hv = await t.text();
-  t.check("сайт нашёл невостребованный налог", /Найдено налога к сбору/.test(hv));
-  t.expectOk("собрать налог в казну", await t.act("Собрать"));
+  // ---------- pool fee cycle (the pool itself is created by the console script) ----------
+  await t.tab("Настройка");
+  const burners = await p.evaluate(() => JSON.parse(localStorage.getItem("burners") || "[]"));
+  const st = await p.evaluate(() => JSON.parse(localStorage.getItem("settings") || "{}"));
+  fs.writeFileSync("../.ui-w0.json", JSON.stringify(burners[0].secret));
+  fs.writeFileSync("../.ui-w1.json", JSON.stringify(burners[1].secret));
+  const base = { ...process.env, ANCHOR_PROVIDER_URL: "http://127.0.0.1:8899", GOVERNANCE_MINT: st.mint };
+  const sh = (cmd, env) => execSync(cmd, { cwd: "..", env: { ...base, ...env }, stdio: "pipe" }).toString();
+  try {
+    sh("npx ts-node scripts/create_pool.ts", { ANCHOR_WALLET: ".ui-w0.json", POOL_OUT: ".ui-pool.json", TOKEN_AMOUNT: "10000000", QUOTE_AMOUNT: "0.1" });
+    const pool = JSON.parse(fs.readFileSync("../.ui-pool.json", "utf8"));
+    await t.fill("Адрес пула", pool.pool);
+    await t.fill("Mint NFT позиции", pool.positionNft);
+    await t.setActive(1);
+    t.expectErr("привязать пул не от owner → NotOwner", await t.act("Привязать пул"), "NotOwner");
+    await t.setActive(0);
+    t.expectOk("привязать пул (owner)", await t.act("Привязать пул"));
+    await t.tab("Обзор");
+    t.check("Обзор показывает привязанный пул", /Позиция \(владеет Config PDA\)/.test(await t.text()));
+    await t.tab("Предложения");
+    t.expectOk("создать предложение после привязки пула (хранилище пула передаётся)", await createProposal({ amount: 0.001, reason: "after pool" }));
+    sh("npx ts-node scripts/pool_swap.ts", { KEYPAIR: ".ui-w1.json", SIDE: "buy", AMOUNT: "0.05" });
+    await t.setActive(2); await t.tab("Деньги");
+    await p.waitForTimeout(9000); // the panel refreshes every 8 s
+    t.check("сайт показывает комиссию, ждущую сбора", /Комиссия ждёт сбора\s*\n?\s*0\.0\d+/.test(await t.text()), (await t.text()).match(/Комиссия ждёт сбора[^\n]*\n?[^\n]*/)?.[0] ?? "");
+    t.expectOk("любой (W3) забирает комиссию в казну", await t.act("Забрать комиссию"));
+    await p.waitForTimeout(9000);
+    t.check("после сбора ждущей комиссии почти нет", /Комиссия ждёт сбора\s*\n?\s*0(\s|\n|$)/.test(await t.text()));
+  } finally {
+    for (const f of [".ui-w0.json", ".ui-w1.json", ".ui-pool.json"]) { try { fs.unlinkSync("../" + f); } catch { /* */ } }
+  }
   await p.screenshot({ path: "tests-final.png", fullPage: true });
 } catch (e) { console.log("SCRIPT ERROR", e.message.split("\n")[0]); await p.screenshot({ path: "tests-error.png", fullPage: true }); }
 summary();

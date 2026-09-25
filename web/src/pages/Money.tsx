@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { useApp } from "../lib/ctx";
-import { BN, TP, fmtDur, fmtRaw, pk, short, toRaw, tsFmt } from "../lib/chain";
+import {
+  ATAP, BN, METEORA, METEORA_EVENT_AUTHORITY, METEORA_POOL_AUTHORITY, TP, TPT, fmtDur, fmtRaw, pk, readPoolVaults, toRaw, tsFmt,
+} from "../lib/chain";
 import { Badge, Btn, Card, Field, Kv, Note, TextIn } from "../lib/ui";
 
 export default function Money() {
@@ -11,7 +14,7 @@ export default function Money() {
     <>
       <Salary />
       <MinisterSpend />
-      <Harvest />
+      <ClaimFees />
     </>
   );
 }
@@ -27,8 +30,8 @@ function useFetched(fn: () => Promise<any>, deps: unknown[]): any {
 }
 
 function Salary() {
-  const { data, active, run, program, readProgram, rpcOpts, P, mint } = useApp();
-  const dec = data.mintInfo!.decimals;
+  const { data, active, run, program, readProgram, rpcOpts, P } = useApp();
+  const dec = data.treasuryDecimals;
   const c = data.config;
   const claim = useFetched(
     () => (active && P ? readProgram.account.payrollClaim.fetchNullable(P.payroll(active.publicKey)) : Promise.resolve(null)),
@@ -51,20 +54,23 @@ function Salary() {
       program.methods
         .claimSalary()
         .accounts({
-          claimant: active!.publicKey, governanceMint: mint!, config: P!.config, payrollClaim: P!.payroll(active!.publicKey),
-          treasury: P!.treasury, claimantTokenAccount: P!.ata(active!.publicKey), tokenProgram: TP, systemProgram: SystemProgram.programId,
+          claimant: active!.publicKey, config: P!.config, treasuryMint: P!.treasuryMint, payrollClaim: P!.payroll(active!.publicKey),
+          treasury: P!.treasury, claimantTokenAccount: P!.tAta(active!.publicKey), tokenProgram: TPT, systemProgram: SystemProgram.programId,
         })
+        .preInstructions([
+          createAssociatedTokenAccountIdempotentInstruction(active!.publicKey, P!.tAta(active!.publicKey), active!.publicKey, P!.treasuryMint, TPT, ATAP),
+        ])
         .rpc(rpcOpts())
     );
 
   return (
     <Card title="Зарплата" right={<Btn kind="primary" onClick={go} disabled={!active}>Забрать зарплату</Btn>}>
-      <p className="muted">Раз в сутки, процент от «утреннего снимка» казны (не от текущего баланса). Получить может президент и министры, каждый за свою роль. Получатель получает сумму за вычетом налога.</p>
+      <p className="muted">Раз в сутки, процент от «утреннего снимка» казны (не от текущего баланса). Получить может президент и министры, каждый за свою роль. Выплата приходит в активе казны ({data.treasurySymbol}).</p>
       <div className="kvs">
         <Kv k="Активный кошелёк" v={role ? <Badge kind="ok">{role}</Badge> : <Badge kind="warn">без роли: контракт откажет</Badge>} />
         <Kv k="Ставка" v={role ? `${bps / 100}% в день` : "—"} />
-        <Kv k="База (снимок казны)" v={fmtRaw(base, dec)} />
-        <Kv k="Ожидаемая выплата (до налога)" v={role ? fmtRaw(payout, dec) : "—"} />
+        <Kv k="База (снимок казны)" v={`${fmtRaw(base, dec)} ${data.treasurySymbol}`} />
+        <Kv k="Ожидаемая выплата" v={role ? `${fmtRaw(payout, dec)} ${data.treasurySymbol}` : "—"} />
         <Kv k="Последний раз" v={last ? tsFmt(last) : "не получал"} />
         <Kv k="Следующая доступна" v={last ? (data.now >= nextAt ? "уже можно" : `через ${fmtDur(nextAt - data.now)}`) : "сразу"} />
       </div>
@@ -73,8 +79,8 @@ function Salary() {
 }
 
 function MinisterSpend() {
-  const { data, active, run, program, readProgram, rpcOpts, P, mint } = useApp();
-  const dec = data.mintInfo!.decimals;
+  const { data, active, run, program, readProgram, rpcOpts, P } = useApp();
+  const dec = data.treasuryDecimals;
   const c = data.config;
   const [role, setRole] = useState(1);
   const [amount, setAmount] = useState("");
@@ -99,15 +105,18 @@ function MinisterSpend() {
       program.methods
         .ministerSpend(role, toRaw(amount || "0", dec), reason)
         .accounts({
-          minister: active!.publicKey, governanceMint: mint!, config: P!.config, spendTracker: P!.tracker(role),
-          treasury: P!.treasury, recipientTokenAccount: P!.ata(pk(to || me)), tokenProgram: TP, systemProgram: SystemProgram.programId,
+          minister: active!.publicKey, config: P!.config, treasuryMint: P!.treasuryMint, spendTracker: P!.tracker(role),
+          treasury: P!.treasury, recipientTokenAccount: P!.tAta(pk(to || me)), tokenProgram: TPT, systemProgram: SystemProgram.programId,
         })
+        .preInstructions([
+          createAssociatedTokenAccountIdempotentInstruction(active!.publicKey, P!.tAta(pk(to || me)), pk(to || me), P!.treasuryMint, TPT, ATAP),
+        ])
         .rpc(rpcOpts())
     );
 
   return (
     <Card title="Трата министра (без голосования, в пределах лимита)">
-      <p className="muted">Лимит считается по РОЛИ, а не по кошельку: смена министра не сбрасывает окно. Лимиты: процент от утреннего снимка казны. Счёт получателя должен уже существовать.</p>
+      <p className="muted">Лимит считается по РОЛИ, а не по кошельку: смена министра не сбрасывает окно. Лимиты: процент от утреннего снимка казны. Сумма в активе казны ({data.treasurySymbol}), счёт получателя создаётся автоматически.</p>
       <div className="row">
         <Field label="Роль">
           <select value={role} onChange={(e) => setRole(Number(e.target.value))}>
@@ -115,7 +124,7 @@ function MinisterSpend() {
             <option value={2}>2: министр культуры</option>
           </select>
         </Field>
-        <Field label="Сумма, токенов"><TextIn value={amount} onChange={setAmount} /></Field>
+        <Field label={`Сумма, ${data.treasurySymbol}`}><TextIn value={amount} onChange={setAmount} /></Field>
         <Field label="Получатель" hint="Пусто = активный кошелёк"><TextIn mono value={to} onChange={setTo} placeholder={me} /></Field>
         <Field label="Причина (обязательна)"><TextIn value={reason} onChange={setReason} /></Field>
         <div className="row end"><Btn kind="primary" onClick={go} disabled={!active}>Потратить</Btn></div>
@@ -131,39 +140,41 @@ function MinisterSpend() {
   );
 }
 
-function Harvest() {
-  const { data, run, program, rpcOpts, P, mint, scanWithheld, active } = useApp();
-  const dec = data.mintInfo!.decimals;
-  const [found, setFound] = useState<{ account: PublicKey; withheld: bigint }[] | null>(null);
+function ClaimFees() {
+  const { data, run, program, connection, rpcOpts, P, mint, active } = useApp();
+  const dec = data.treasuryDecimals;
+  const sym = data.treasurySymbol;
+  const pool = data.pool;
 
-  const scan = async () => setFound(await scanWithheld());
-  const harvest = async () => {
-    const list = found ?? (await scanWithheld());
-    if (!list.length) { alert("Налога для сбора нет."); return; }
-    for (let i = 0; i < list.length; i += 20) {
-      const chunk = list.slice(i, i + 20);
-      const r = await run(`Собрать налог (${chunk.length} счетов)`, () =>
-        program.methods
-          .harvestFees()
-          .accounts({ governanceMint: mint!, config: P!.config, treasury: P!.treasury, tokenProgram: TP })
-          .remainingAccounts(chunk.map((c) => ({ pubkey: c.account, isWritable: true, isSigner: false })))
-          .rpc(rpcOpts())
-      );
-      if (!r.ok) break;
-    }
-    setFound(null);
-  };
-  const total = (found ?? []).reduce((a, b) => a + b.withheld, 0n);
+  const claim = () =>
+    run("Забрать комиссию пула в казну", async () => {
+      if (!P || !mint || !pool) throw new Error("Пул не привязан");
+      const { vaultA, vaultB } = await readPoolVaults(connection, pool.pool);
+      return program.methods
+        .claimPoolFees()
+        .accounts({
+          caller: active!.publicKey, config: P.config, governanceMint: mint, treasuryMint: P.treasuryMint, treasury: P.treasury,
+          feeAAccount: P.feeA, poolAuthority: METEORA_POOL_AUTHORITY, pool: pool.pool, position: pool.position,
+          tokenAVault: vaultA, tokenBVault: vaultB, positionNftAccount: data.config.feePositionNftAccount,
+          tokenAProgram: TP, tokenBProgram: TPT, eventAuthority: METEORA_EVENT_AUTHORITY, meteoraProgram: METEORA,
+        })
+        .rpc(rpcOpts());
+    });
 
   return (
-    <Card title="Сбор налога в казну" right={<><button onClick={scan}>Найти налог</button> <Btn kind="primary" onClick={harvest} disabled={!active}>Собрать</Btn></>}>
-      <p className="muted">Налог с каждого перевода откладывается на токен-счетах. Любой может запустить сбор: налог уйдёт в казну. Сам он не запускается (нужен бот).</p>
-      <Kv k="Казна сейчас" v={fmtRaw(data.treasury, dec)} />
-      {found && (
+    <Card title="Комиссия пула → казна" right={<Btn kind="primary" onClick={claim} disabled={!active || !pool}>Забрать комиссию</Btn>}>
+      <p className="muted">
+        5% с каждой покупки и продажи в пуле удерживаются самим пулом в активе казны и копятся на позиции. Забрать их в казну может любой:
+        одна обычная транзакция, получатель зашит в контракте. Ничего не сгорает и не устаревает, бот не нужен.
+      </p>
+      <Kv k="Казна сейчас" v={`${fmtRaw(data.treasury, dec)} ${sym}`} />
+      {pool ? (
         <>
-          <Kv k="Найдено налога к сбору" v={`${fmtRaw(total, dec)} на ${found.length} счетах`} />
-          {found.map((f) => <div key={f.account.toBase58()} className="muted mono">{short(f.account)}: {fmtRaw(f.withheld, dec)}</div>)}
+          <Kv k="Комиссия ждёт сбора" v={pool.pending === null ? "—" : `${fmtRaw(pool.pending, dec)} ${sym}`} />
+          <Kv k="Монет государства в пуле (не голосуют)" v={pool.vault === null ? "—" : fmtRaw(pool.vault, data.mintInfo!.decimals)} />
         </>
+      ) : (
+        <Note kind="warn">Пул ещё не привязан (вкладка «Настройка», шаг 3.5).</Note>
       )}
     </Card>
   );

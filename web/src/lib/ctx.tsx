@@ -1,22 +1,26 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { getMint, getTransferFeeConfig, getAccount, unpackAccount, getTransferFeeAmount } from "@solana/spl-token";
+import { getMint, getAccount, unpackAccount } from "@solana/spl-token";
 import { useWallet } from "@solana/wallet-adapter-react";
 import {
-  AppSigner, DEFAULT_PROGRAM_ID, Pdas, TP, burnerSigner, describeError,
-  makeProgram, makeProvider, pdas,
+  AppSigner, DEFAULT_PROGRAM_ID, METEORA_POOL_AUTHORITY, Pdas, TP, TPT, WSOL, burnerSigner, describeError,
+  makeProgram, makeProvider, pdas, readPendingPoolFee,
 } from "./chain";
 
 export interface Settings {
   rpc: string;
   programId: string;
+  /** the state's voting coin */
   mint: string;
+  /** asset of the treasury (the pool's quote asset); wSOL unless changed */
+  treasuryMint: string;
   skipPreflight: boolean;
 }
 const DEFAULT_SETTINGS: Settings = {
   rpc: "https://api.testnet.solana.com",
   programId: DEFAULT_PROGRAM_ID.toBase58(),
   mint: "",
+  treasuryMint: WSOL.toBase58(),
   skipPreflight: false,
 };
 
@@ -28,23 +32,31 @@ export interface LogEntry {
 
 export interface MintInfo {
   decimals: number; supply: bigint; mintAuthority: string | null;
-  feeBps: number | null; feeAuthority: string | null; withheldAuthority: string | null;
+}
+/** The Meteora pool linked to the state (null until register_pool). */
+export interface PoolInfo {
+  pool: PublicKey; position: PublicKey;
+  /** governance coins sitting in the pool vault (they cannot vote: excluded from the voting base) */
+  vault: bigint | null;
+  /** trading fee accrued on the position, waiting for claim_pool_fees (raw units of the treasury asset) */
+  pending: bigint | null;
 }
 export interface ProposalRow { id: number; pda: PublicKey; data: any; mySnap: any | null }
 export interface ChainData {
   loaded: boolean; error: string | null;
   config: any | null; mintInfo: MintInfo | null;
   treasury: bigint | null; fund: bigint | null;
+  /** decimals and short name of the treasury asset (wSOL = "SOL") */
+  treasuryDecimals: number; treasurySymbol: string;
+  pool: PoolInfo | null;
   proposals: ProposalRow[]; now: number;
   myTokens: bigint | null; mySol: number | null;
 }
 const EMPTY: ChainData = {
   loaded: false, error: null, config: null, mintInfo: null, treasury: null, fund: null,
+  treasuryDecimals: 9, treasurySymbol: "SOL", pool: null,
   proposals: [], now: Math.floor(Date.now() / 1000), myTokens: null, mySol: null,
 };
-
-// Token-2022 reports a removed authority as the all-zero address: show it as "none".
-const nz = (k?: PublicKey | null) => (k && !k.equals(PublicKey.default) ? k.toBase58() : null);
 
 export const MIN_SOL_LAMPORTS = 10_000_000; // 0.01 SOL: covers the most expensive step (token + accounts)
 
@@ -62,7 +74,6 @@ interface Ctx {
   run: (label: string, fn: () => Promise<string | void>) => Promise<{ ok: boolean; sig?: string; err?: string }>;
   rpcOpts: () => any;
   scanHolders: () => Promise<Holder[]>;
-  scanWithheld: () => Promise<{ account: PublicKey; withheld: bigint }[]>;
 }
 
 const C = createContext<Ctx>(null as any);
@@ -107,7 +118,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const mint = useMemo(() => {
     try { return settings.mint ? new PublicKey(settings.mint) : null; } catch { return null; }
   }, [settings.mint]);
-  const P = useMemo(() => (mint ? pdas(programId, mint) : null), [programId, mint]);
+  const treasuryMint = useMemo(() => {
+    try { return new PublicKey(settings.treasuryMint || WSOL.toBase58()); } catch { return WSOL; }
+  }, [settings.treasuryMint]);
+  const P = useMemo(() => (mint ? pdas(programId, mint, treasuryMint) : null), [programId, mint, treasuryMint]);
 
   const signers: AppSigner[] = useMemo(() => {
     const list: AppSigner[] = mainnet
@@ -167,22 +181,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         let mintInfo: MintInfo | null = null;
         try {
           const m = await getMint(connection, mint, "confirmed", TP);
-          const fc = getTransferFeeConfig(m);
-          mintInfo = {
-            decimals: m.decimals, supply: m.supply, mintAuthority: m.mintAuthority?.toBase58() ?? null,
-            feeBps: fc ? fc.newerTransferFee.transferFeeBasisPoints : null,
-            feeAuthority: nz(fc?.transferFeeConfigAuthority),
-            withheldAuthority: nz(fc?.withdrawWithheldAuthority),
-          };
+          mintInfo = { decimals: m.decimals, supply: m.supply, mintAuthority: m.mintAuthority?.toBase58() ?? null };
         } catch { /* mint not there */ }
+        let treasuryDecimals = 9;
+        try { treasuryDecimals = (await getMint(connection, P.treasuryMint, "confirmed", TPT)).decimals; } catch { /* keep default */ }
+        const treasurySymbol = P.treasuryMint.equals(WSOL) ? "SOL" : "актив казны";
         let config: any = null;
         try { config = await readProgram.account.config.fetch(P.config); } catch { /* not initialised */ }
-        const bal = async (a: PublicKey) => {
-          try { return (await getAccount(connection, a, "confirmed", TP)).amount; } catch { return null; }
+        const bal = async (a: PublicKey, prog = TP) => {
+          try { return (await getAccount(connection, a, "confirmed", prog)).amount; } catch { return null; }
         };
-        const treasury = config ? await bal(P.treasury) : null;
-        const fund = config && !config.milestoneFundTokenAccount.equals(PublicKey.default) ? await bal(P.milestoneFund) : null;
+        const treasury = config ? await bal(P.treasury, TPT) : null;
+        const fund = config && !config.milestoneFundTokenAccount.equals(PublicKey.default) ? await bal(P.milestoneFund, TPT) : null;
         const myTokens = active ? await bal(P.ata(active.publicKey)) : null;
+        let pool: PoolInfo | null = null;
+        if (config && !config.feePool.equals(PublicKey.default)) {
+          const vaultKey: PublicKey = config.quorumExcludedAccount;
+          let pending: bigint | null = null;
+          try { pending = await readPendingPoolFee(connection, config.feePool, config.feePosition); } catch { /* pool not readable */ }
+          pool = { pool: config.feePool, position: config.feePosition, vault: await bal(vaultKey), pending };
+        }
         let proposals: ProposalRow[] = [];
         if (config) {
           const n = Number(config.proposalCount.toString());
@@ -191,7 +209,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const snaps = active && n ? await readProgram.account.voterSnapshot.fetchMultiple(pdaList.map((p) => P.snap(p, active.publicKey))) : [];
           proposals = rows.map((d: any, i: number) => ({ id: i, pda: pdaList[i], data: d, mySnap: snaps[i] ?? null })).filter((r: ProposalRow) => r.data);
         }
-        if (!dead) setData({ loaded: true, error: null, config, mintInfo, treasury, fund, proposals, now, myTokens: myTokens as bigint | null, mySol });
+        if (!dead) setData({ loaded: true, error: null, config, mintInfo, treasury, fund, treasuryDecimals, treasurySymbol, pool, proposals, now, myTokens: myTokens as bigint | null, mySol });
       } catch (e: any) {
         if (!dead) setData((d) => ({ ...d, loaded: true, error: describeError(e) }));
       }
@@ -239,7 +257,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const a of accts) {
       try {
         const u = unpackAccount(a.pubkey, a.account, TP);
-        if (u.mint.equals(mint) && u.amount > 0n && !u.owner.equals(P.config)) {
+        // the state itself and the pool (its vault is owned by the Meteora pool authority) cannot vote
+        if (u.mint.equals(mint) && u.amount > 0n && !u.owner.equals(P.config) && !u.owner.equals(METEORA_POOL_AUTHORITY)) {
           out.push({ owner: u.owner, account: a.pubkey, amount: u.amount });
         }
       } catch { /* not a token account */ }
@@ -247,28 +266,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return out.sort((a, b) => (a.amount < b.amount ? 1 : -1));
   };
 
-  const scanWithheld = async () => {
-    if (!mint) return [];
-    const accts = await connection.getProgramAccounts(TP, {
-      commitment: "confirmed",
-      filters: [{ memcmp: { offset: 0, bytes: mint.toBase58() } }],
-    });
-    const out: { account: PublicKey; withheld: bigint }[] = [];
-    for (const a of accts) {
-      try {
-        const u = unpackAccount(a.pubkey, a.account, TP);
-        if (!u.mint.equals(mint)) continue;
-        const fa = getTransferFeeAmount(u);
-        if (fa && fa.withheldAmount > 0n) out.push({ account: a.pubkey, withheld: fa.withheldAmount });
-      } catch { /* skip */ }
-    }
-    return out;
-  };
-
   const value: Ctx = {
     settings, setSettings, connection, programId, mint, P, program, readProgram, provider,
     signers, active, setActiveId, burners, addBurner, removeBurner, mainnet,
-    data, refresh, log, clearLog: () => setLog([]), run, rpcOpts, scanHolders, scanWithheld,
+    data, refresh, log, clearLog: () => setLog([]), run, rpcOpts, scanHolders,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

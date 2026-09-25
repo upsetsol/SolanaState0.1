@@ -24,3 +24,4 @@ scripts/.multisig.json
 web/dist
 web/tests/*.png
 .claude/
+.ui-*.json

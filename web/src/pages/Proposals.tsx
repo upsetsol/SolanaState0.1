@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { useApp, ProposalRow } from "../lib/ctx";
-import { BN, PARAM_KEYS, PROPOSAL_TYPES, TP, fmtDur, fmtRaw, pk, short, toRaw, tsFmt } from "../lib/chain";
+import { ATAP, BN, PARAM_KEYS, PROPOSAL_TYPES, TPT, fmtDur, fmtRaw, pk, short, toRaw, tsFmt } from "../lib/chain";
 import { Badge, Btn, Card, Copy, Field, Kv, Note, TextIn } from "../lib/ui";
 
 export default function Proposals() {
@@ -21,7 +22,7 @@ export default function Proposals() {
 
 function Create() {
   const { active, data, run, program, rpcOpts, P, mint } = useApp();
-  const dec = data.mintInfo?.decimals ?? 9;
+  const tdec = data.treasuryDecimals;
   const [type, setType] = useState(0);
   const [target, setTarget] = useState("");
   const [amount, setAmount] = useState("");
@@ -34,13 +35,14 @@ function Create() {
   const create = async () => {
     if (!active || !mint || !P) throw new Error("Нет кошелька");
     const id = data.config.proposalCount;
-    const amt = type === 4 ? new BN(amount || "0") : usesAmountTokens ? toRaw(amount || "0", dec) : new BN(0);
+    const amt = type === 4 ? new BN(amount || "0") : usesAmountTokens ? toRaw(amount || "0", tdec) : new BN(0);
     const tgt = usesTarget ? pk(target || me) : active.publicKey;
     return program.methods
       .createProposal(type, tgt, amt, type === 4 ? paramKey : 0, reason || PROPOSAL_TYPES[type])
       .accounts({
-        creator: active.publicKey, governanceMint: mint, creatorTokenAccount: P.ata(active.publicKey),
-        config: P.config, treasury: P.treasury, proposal: P.proposal(id), tokenProgram: TP, systemProgram: SystemProgram.programId,
+        creator: active.publicKey, config: P.config, governanceMint: mint, creatorTokenAccount: P.ata(active.publicKey),
+        treasury: P.treasury, quorumExcluded: data.pool ? data.config.quorumExcludedAccount : null,
+        proposal: P.proposal(id), systemProgram: SystemProgram.programId,
       })
       .rpc(rpcOpts());
   };
@@ -63,7 +65,7 @@ function Create() {
           </Field>
         )}
         {(usesAmountTokens || type === 4) && (
-          <Field label={type === 4 ? "Новое значение (число)" : "Сумма, токенов"}>
+          <Field label={type === 4 ? "Новое значение (число)" : `Сумма, ${data.treasurySymbol}`}>
             <TextIn value={amount} onChange={setAmount} placeholder={type === 4 ? "например 80" : "например 1000"} />
           </Field>
         )}
@@ -83,8 +85,8 @@ export function stageOf(row: ProposalRow, data: any) {
   const fb = Number(c.execFallbackSecs.toString());
   const unlock = dl + tl;
   const supply: bigint = data.mintInfo.supply;
-  const treasury: bigint = data.treasury ?? 0n;
-  const circ = supply > treasury ? supply - treasury : 0n;
+  const inPool: bigint = data.pool?.vault ?? 0n; // coins in the pool vault cannot vote
+  const circ = supply > inPool ? supply - inPool : 0n;
   const qbps = BigInt((p.proposalType === 0 || p.proposalType === 6 ? c.quorumSpendBps : p.proposalType <= 3 ? c.quorumRoleBps : c.quorumParamBps).toString());
   const vf = BigInt(p.votesFor.toString());
   const va = BigInt(p.votesAgainst.toString());
@@ -104,6 +106,7 @@ function Proposal({ row }: { row: ProposalRow }) {
   const app = useApp();
   const { data, active, run, program, rpcOpts, P, mint, scanHolders } = app;
   const dec = data.mintInfo!.decimals;
+  const tdec = data.treasuryDecimals;
   const p = row.data;
   const s = stageOf(row, data);
   const [who, setWho] = useState("");
@@ -144,18 +147,25 @@ function Proposal({ row }: { row: ProposalRow }) {
       program.methods
         .executeProposal(new BN(row.id))
         .accounts({
-          executor: active!.publicKey, governanceMint: mint!, config: P!.config, proposal: row.pda, treasury: P!.treasury,
-          recipientTokenAccount: p.proposalType === 0 ? P!.ata(p.target) : null,
+          executor: active!.publicKey, config: P!.config, governanceMint: mint!, treasuryMint: P!.treasuryMint,
+          proposal: row.pda, treasury: P!.treasury,
+          recipientTokenAccount: p.proposalType === 0 ? P!.tAta(p.target) : null,
           milestoneFund: p.proposalType === 6 ? P!.milestoneFund : null,
-          tokenProgram: TP,
+          quorumExcluded: data.pool ? data.config.quorumExcludedAccount : null,
+          tokenProgram: TPT,
         })
+        .preInstructions(
+          p.proposalType === 0
+            ? [createAssociatedTokenAccountIdempotentInstruction(active!.publicKey, P!.tAta(p.target), p.target, P!.treasuryMint, TPT, ATAP)]
+            : []
+        )
         .rpc(rpcOpts())
     );
 
   const detail = () => {
     const t = p.proposalType;
-    if (t === 0) return `${fmtRaw(p.amount, dec)} токенов → ${short(p.target)}`;
-    if (t === 6) return `${fmtRaw(p.amount, dec)} токенов в фонд вех`;
+    if (t === 0) return `${fmtRaw(p.amount, tdec)} ${data.treasurySymbol} → ${short(p.target)}`;
+    if (t === 6) return `${fmtRaw(p.amount, tdec)} ${data.treasurySymbol} в фонд вех`;
     if (t === 4) return `${PARAM_KEYS[p.paramKey] ?? p.paramKey} = ${p.amount.toString()}`;
     return short(p.target);
   };

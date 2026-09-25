@@ -8,6 +8,8 @@ import {
 } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
@@ -15,8 +17,17 @@ import idl from "../../../idl/onchain_state_solana.json";
 
 export const IDL: any = idl;
 export const DEFAULT_PROGRAM_ID = new PublicKey(IDL.address);
+/** Token program of the state's own coin (Token-2022, metadata, no tax). */
 export const TP = TOKEN_2022_PROGRAM_ID;
+/** Token program of the treasury asset (wSOL / USDC / USDT are classic SPL tokens). */
+export const TPT = TOKEN_PROGRAM_ID;
+/** Default treasury asset: wrapped SOL. */
+export const WSOL = NATIVE_MINT;
 export const ATAP = ASSOCIATED_TOKEN_PROGRAM_ID;
+/** Meteora DAMM v2 (cp-amm). */
+export const METEORA = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+export const METEORA_POOL_AUTHORITY = new PublicKey("HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC");
+export const METEORA_EVENT_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], METEORA)[0];
 export const BN = anchor.BN;
 
 export interface AppSigner {
@@ -127,12 +138,18 @@ function u64le(n: number | bigint | string | anchor.BN): Buffer {
   return b;
 }
 
-export function pdas(programId: PublicKey, mint: PublicKey) {
+/** `mint` = the state's voting coin; `treasuryMint` = the asset the treasury holds (default wSOL). */
+export function pdas(programId: PublicKey, mint: PublicKey, treasuryMint: PublicKey = WSOL) {
   const f = (seeds: (Buffer | Uint8Array)[]) => PublicKey.findProgramAddressSync(seeds, programId)[0];
   const config = f([Buffer.from("config"), mint.toBuffer()]);
   return {
     config,
-    treasury: getAssociatedTokenAddressSync(mint, config, true, TP, ATAP),
+    treasuryMint,
+    treasury: getAssociatedTokenAddressSync(treasuryMint, config, true, TPT, ATAP),
+    /** a wallet's account for the TREASURY asset (salaries, spends, payouts arrive here) */
+    tAta: (owner: PublicKey) => getAssociatedTokenAddressSync(treasuryMint, owner, true, TPT, ATAP),
+    /** Config-owned governance-coin account used as the "token A" destination of Meteora's fee claim */
+    feeA: getAssociatedTokenAddressSync(mint, config, true, TP, ATAP),
     milestoneFund: f([Buffer.from("milestone_fund"), config.toBuffer()]),
     ata: (owner: PublicKey) => getAssociatedTokenAddressSync(mint, owner, false, TP, ATAP),
     proposal: (id: number | bigint | string | anchor.BN) =>
@@ -148,6 +165,31 @@ export function pdas(programId: PublicKey, mint: PublicKey) {
   };
 }
 export type Pdas = ReturnType<typeof pdas>;
+
+// ---------------- Meteora pool helpers (raw account layout; offsets include the 8-byte discriminator) ----------------
+
+export const meteoraPosition = (nftMint: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("position"), nftMint.toBuffer()], METEORA)[0];
+export const meteoraNftAccount = (nftMint: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("position_nft_account"), nftMint.toBuffer()], METEORA)[0];
+
+const leBig = (d: Uint8Array, off: number, len: number) => {
+  let v = 0n;
+  for (let i = len - 1; i >= 0; i--) v = (v << 8n) | BigInt(d[off + i]);
+  return v;
+};
+
+export async function readPoolVaults(conn: Connection, pool: PublicKey): Promise<{ vaultA: PublicKey; vaultB: PublicKey }> {
+  const info = await conn.getAccountInfo(pool, "confirmed");
+  if (!info) throw new Error("Пул не найден: " + pool.toBase58());
+  return { vaultA: new PublicKey(info.data.subarray(232, 264)), vaultB: new PublicKey(info.data.subarray(264, 296)) };
+}
+
+/** Trading fee accrued on the position and not claimed yet (Meteora's formula), in raw units of the quote asset. */
+export async function readPendingPoolFee(conn: Connection, pool: PublicKey, position: PublicKey): Promise<bigint> {
+  const [pi, xi] = await Promise.all([conn.getAccountInfo(pool, "confirmed"), conn.getAccountInfo(position, "confirmed")]);
+  if (!pi || !xi) throw new Error("pool or position not found");
+  const liquidity = leBig(xi.data, 152, 16) + leBig(xi.data, 168, 16) + leBig(xi.data, 184, 16);
+  return leBig(xi.data, 144, 8) + (((leBig(pi.data, 520, 32) - leBig(xi.data, 104, 32)) * liquidity) >> 128n);
+}
 
 // ---------------- errors ----------------
 

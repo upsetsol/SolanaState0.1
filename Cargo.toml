@@ -12,6 +12,8 @@ rust-version = "1.89.0"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+# Smaller program = smaller refundable deposit (rent) on deploy: about -18% versus the default opt-level 3.
+opt-level = "z"
 [profile.release.build-override]
 opt-level = 3
 incremental = false

@@ -101,7 +101,8 @@ OWNERS_AUTHORITY=$ME ADMIN_AUTHORITY=$ME PRESIDENT=$ME PARAMS=test npx ts-node s
 npx ts-node scripts/setup_milestone_fund.ts
 
 # 4. Пул Meteora: 5% комиссия с каждой покупки и продажи, только в SOL; ликвидность блокируется навсегда,
-#    позиция передаётся государству (нужен devnet: на testnet Meteora может отсутствовать)
+#    позиция передаётся государству (нужен devnet: на testnet Meteora может отсутствовать).
+#    Делайте это ДО раздачи монет другим людям: адрес пула зависит только от пары токенов.
 TOKEN_AMOUNT=100000000 QUOTE_AMOUNT=1 npx ts-node scripts/create_pool.ts
 npx ts-node scripts/register_pool.ts
 

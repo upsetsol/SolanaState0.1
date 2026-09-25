@@ -8,13 +8,16 @@ export default function Overview() {
   const { data, settings, active, mint, P } = useApp();
   const c = data.config;
   const dec = data.mintInfo?.decimals ?? 9;
+  const tdec = data.treasuryDecimals;
+  const sym = data.treasurySymbol;
   if (!mint) return <Note kind="warn">Токен не выбран. Перейдите на вкладку «Настройка» и создайте или вставьте токен.</Note>;
   if (!data.mintInfo) return <Note kind="warn">Токен {short(mint)} не найден в этой сети. Проверьте сеть и адрес на вкладке «Настройка».</Note>;
   if (!c) return <Note kind="warn">Государство для этого токена ещё не инициализировано. Пройдите мастер на вкладке «Настройка».</Note>;
 
   const supply = data.mintInfo.supply;
   const treasury = data.treasury ?? 0n;
-  const circulating = supply > treasury ? supply - treasury : 0n;
+  const inPool = data.pool?.vault ?? 0n; // coins sitting in the pool vault cannot vote
+  const circulating = supply > inPool ? supply - inPool : 0n;
   const bps = (n: any) => `${Number(n.toString()) / 100}%`;
   const need = (q: any) => (circulating * BigInt(q.toString())) / 10000n;
   const role = (k: PublicKey) => (k.equals(PublicKey.default) ? <Badge>вакантно</Badge> : <Copy text={k.toBase58()}>{short(k)}</Copy>);
@@ -27,10 +30,11 @@ export default function Overview() {
   return (
     <>
       <div className="tiles">
-        <div className="tile"><span>Казна</span><b>{fmtRaw(treasury, dec)}</b></div>
-        <div className="tile"><span>Фонд вех</span><b>{data.fund === null ? "не создан" : fmtRaw(data.fund, dec)}</b></div>
-        <div className="tile"><span>Зарезервировано под вехи</span><b>{fmtRaw(c.milestoneReserved, dec)}</b></div>
-        <div className="tile"><span>В обращении (выпуск − казна)</span><b>{fmtRaw(circulating, dec)}</b></div>
+        <div className="tile"><span>Казна ({sym})</span><b>{fmtRaw(treasury, tdec)}</b></div>
+        <div className="tile"><span>Фонд вех ({sym})</span><b>{data.fund === null ? "не создан" : fmtRaw(data.fund, tdec)}</b></div>
+        <div className="tile"><span>Зарезервировано под вехи</span><b>{fmtRaw(c.milestoneReserved, tdec)}</b></div>
+        <div className="tile"><span>Голосуют (выпуск − монеты в пуле)</span><b>{fmtRaw(circulating, dec)}</b></div>
+        <div className="tile"><span>Комиссия пула ждёт сбора</span><b>{data.pool?.pending === null || data.pool === null ? "—" : fmtRaw(data.pool.pending, tdec)}</b></div>
         <div className="tile"><span>Пауза</span><b className={c.paused ? "bad" : "good"}>{c.paused ? "ВКЛЮЧЕНА" : "выключена"}</b></div>
         <div className="tile"><span>Мой баланс</span><b>{data.myTokens === null ? "—" : fmtRaw(data.myTokens, dec)}</b></div>
       </div>
@@ -59,7 +63,7 @@ export default function Overview() {
         <Card title="Деньги и лимиты">
           <Kv k="Пауза между тратами" v={fmtDur(cool)} />
           <Kv k="Последняя трата исполнена" v={lastSpend ? `${tsFmt(lastSpend)}${coolLeft ? ` (ещё ${fmtDur(coolLeft)} до следующей)` : " (можно следующую)"}` : "ещё не было"} />
-          <Kv k="Утренний снимок казны" v={snapDay === 0 ? "ещё не делался (создастся при первой зарплате или трате)" : `${fmtRaw(c.treasurySnapshotAmount, dec)} (${snapDay === dayNow ? "сегодняшний" : "вчерашний: обновится при первом действии"})`} />
+          <Kv k="Утренний снимок казны" v={snapDay === 0 ? "ещё не делался (создастся при первой зарплате или трате)" : `${fmtRaw(c.treasurySnapshotAmount, tdec)} ${sym} (${snapDay === dayNow ? "сегодняшний" : "вчерашний: обновится при первом действии"})`} />
           <Kv k="Зарплата президента / день" v={bps(c.payrollPresidentBps)} />
           <Kv k="Зарплата минфина / день" v={bps(c.payrollFinanceBps)} />
           <Kv k="Зарплата минкульта / день" v={bps(c.payrollCultureBps)} />
@@ -77,10 +81,22 @@ export default function Overview() {
         <Card title="Токен">
           <Kv k="Адрес" v={<Copy text={mint.toBase58()}>{short(mint)}</Copy>} />
           <Kv k="Выпуск" v={fmtRaw(supply, dec)} />
-          <Kv k="Налог на перевод" v={data.mintInfo.feeBps === null ? "нет" : `${data.mintInfo.feeBps / 100}%`} />
-          <Kv k="Менять налог может" v={data.mintInfo.feeAuthority ? short(data.mintInfo.feeAuthority) : "никто (заморожен)"} />
-          <Kv k="Забирать налог может" v={<>{short(data.mintInfo.withheldAuthority)} {P && data.mintInfo.withheldAuthority === P.config.toBase58() && <Badge kind="ok">программа</Badge>}</>} />
+          <Kv k="Налог на перевод" v="нет (казну наполняет комиссия пула)" />
           <Kv k="Выпускать новые монеты может" v={data.mintInfo.mintAuthority ? short(data.mintInfo.mintAuthority) : "никто"} />
+        </Card>
+
+        <Card title="Пул Meteora (источник казны)">
+          {data.pool ? (
+            <>
+              <Kv k="Пул" v={<Copy text={data.pool.pool.toBase58()}>{short(data.pool.pool)}</Copy>} />
+              <Kv k="Позиция (владеет Config PDA)" v={<Copy text={data.pool.position.toBase58()}>{short(data.pool.position)}</Copy>} />
+              <Kv k="Комиссия пула" v="5% с каждой сделки, только в активе казны; Meteora берёт 20% от неё" />
+              <Kv k="Ждёт сбора" v={data.pool.pending === null ? "—" : `${fmtRaw(data.pool.pending, tdec)} ${sym}`} />
+              <Kv k="Монет государства в пуле" v={data.pool.vault === null ? "—" : fmtRaw(data.pool.vault, dec)} />
+            </>
+          ) : (
+            <p className="muted">Пул ещё не привязан (вкладка «Настройка», шаг 3.5).</p>
+          )}
         </Card>
 
         <Card title="Сеть">
@@ -88,6 +104,7 @@ export default function Overview() {
           <Kv k="Время сети" v={tsFmt(data.now)} />
           <Kv k="Config PDA" v={P ? <Copy text={P.config.toBase58()}>{short(P.config)}</Copy> : "—"} />
           <Kv k="Казна (счёт)" v={P ? <Copy text={P.treasury.toBase58()}>{short(P.treasury)}</Copy> : "—"} />
+          <Kv k="Актив казны" v={P ? <Copy text={P.treasuryMint.toBase58()}>{sym === "SOL" ? "wSOL" : short(P.treasuryMint)}</Copy> : "—"} />
           <Kv k="Фонд вех (счёт)" v={P ? <Copy text={P.milestoneFund.toBase58()}>{short(P.milestoneFund)}</Copy> : "—"} />
         </Card>
       </div>

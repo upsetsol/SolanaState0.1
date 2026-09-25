@@ -14,6 +14,8 @@
 //   FEE_BPS=500                    (optional)
 //   POOL_OUT=./.pool.json          (optional — where the pool/position addresses are saved)
 //
+// Run it BEFORE handing coins to other people: the pool address depends only on the token pair, so
+// whoever holds coins could create the pair's pool first and block yours.
 // Afterwards: `npx ts-node scripts/register_pool.ts` (owners_authority) links it to the state.
 
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";

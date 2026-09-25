@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import {
-  ExtensionType, createAssociatedTokenAccountIdempotentInstruction, createInitializeMintInstruction,
-  createInitializeTransferFeeConfigInstruction, createMintToInstruction,
-  createTransferCheckedWithFeeInstruction, getMintLen, getAccount, getAssociatedTokenAddressSync,
+  ExtensionType, LENGTH_SIZE, TYPE_SIZE, createAssociatedTokenAccountIdempotentInstruction, createInitializeMintInstruction,
+  createInitializeMetadataPointerInstruction, createMintToInstruction, createSyncNativeInstruction,
+  createTransferCheckedInstruction, getMintLen, getAccount, getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
+import { createInitializeInstruction as createInitMetadataIx, pack } from "@solana/spl-token-metadata";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useApp } from "../lib/ctx";
-import { ATAP, BN, PARAM_FIELDS, PRESETS, TP, fmtRaw, pk, short, toRaw } from "../lib/chain";
+import { ATAP, BN, PARAM_FIELDS, PRESETS, TP, TPT, WSOL, fmtRaw, meteoraNftAccount, meteoraPosition, pk, short, toRaw } from "../lib/chain";
 import { Badge, Btn, Card, Copy, Field, Kv, Note, TextIn } from "../lib/ui";
 
 const NETS = [
@@ -39,8 +40,11 @@ export default function Setup() {
           <Field label="Program ID" hint="Из файла idl/. Менять только если развернули свою копию.">
             <TextIn mono value={settings.programId} onChange={(v) => setSettings({ programId: v })} />
           </Field>
-          <Field label="Токен государства (mint)" hint="Один токен = одно государство. Создайте в шаге 3 или вставьте существующий.">
+          <Field label="Монета государства (mint)" hint="Одна монета = одно государство. Создайте в шаге 3 или вставьте существующую.">
             <TextIn mono value={settings.mint} onChange={(v) => setSettings({ mint: v.trim() })} placeholder="адрес mint" />
+          </Field>
+          <Field label="Актив казны (mint)" hint="Парный актив пула. По умолчанию wSOL (обёрнутый SOL); для USDC/USDT вставьте их mint.">
+            <TextIn mono value={settings.treasuryMint} onChange={(v) => setSettings({ treasuryMint: v.trim() })} />
           </Field>
         </div>
         <label className="check">
@@ -60,6 +64,7 @@ export default function Setup() {
         <Step2Init />
         <Step3Fund />
         <Step4MilestoneFund />
+        <Step5Pool />
       </Card>
     </>
   );
@@ -128,13 +133,11 @@ function Wallets() {
   const sendTokensTo = async (target: PublicKey) => {
     if (!active || !mint || !P || !data.mintInfo) return;
     const amount = toRaw(sendTok, dec);
-    await run(`Отправить ${sendTok} токенов → ${short(target)} (с налогом)`, async () => {
-      const bps = BigInt(data.mintInfo!.feeBps ?? 0);
+    await run(`Отправить ${sendTok} токенов → ${short(target)}`, async () => {
       const raw = BigInt(amount.toString());
-      const fee = (raw * bps + 9999n) / 10000n;
       const tx = new Transaction().add(
         createAssociatedTokenAccountIdempotentInstruction(active.publicKey, P.ata(target), target, mint, TP, ATAP),
-        createTransferCheckedWithFeeInstruction(P.ata(active.publicKey), mint, P.ata(target), active.publicKey, raw, dec, fee, [], TP)
+        createTransferCheckedInstruction(P.ata(active.publicKey), mint, P.ata(target), active.publicKey, raw, dec, [], TP)
       );
       return app.provider.sendAndConfirm(tx, [], app.rpcOpts());
     });
@@ -232,24 +235,26 @@ function ConnectPhantom() {
 // ---------------------------------------------------------------- wizard
 
 function Step1Mint() {
-  const { active, connection, settings, setSettings, data, run, provider, rpcOpts, programId } = useApp();
+  const { active, connection, settings, setSettings, data, run, provider, rpcOpts } = useApp();
   const [decimals, setDecimals] = useState("9");
-  const [feeBps, setFeeBps] = useState("500");
+  const [name, setName] = useState("Test 1");
+  const [symbol, setSymbol] = useState("TEST1");
   const [supply, setSupply] = useState("1000000000");
   const done = !!data.mintInfo;
   const create = async () => {
     if (!active) throw new Error("Нет кошелька");
     const mintKp = Keypair.generate();
-    const [config] = PublicKey.findProgramAddressSync([Buffer.from("config"), mintKp.publicKey.toBuffer()], programId);
     const dec = Number(decimals);
-    const len = getMintLen([ExtensionType.TransferFeeConfig]);
-    const rent = await connection.getMinimumBalanceForRentExemption(len);
+    const meta = { mint: mintKp.publicKey, name, symbol, uri: "", additionalMetadata: [] as [string, string][] };
+    const len = getMintLen([ExtensionType.MetadataPointer]);
+    const rent = await connection.getMinimumBalanceForRentExemption(len + TYPE_SIZE + LENGTH_SIZE + pack(meta).length);
     const myAta = getAssociatedTokenAddressSync(mintKp.publicKey, active.publicKey, false, TP, ATAP);
     const raw = BigInt(Math.round(Number(supply))) * 10n ** BigInt(dec);
     const tx = new Transaction().add(
       SystemProgram.createAccount({ fromPubkey: active.publicKey, newAccountPubkey: mintKp.publicKey, space: len, lamports: rent, programId: TP }),
-      createInitializeTransferFeeConfigInstruction(mintKp.publicKey, null, config, Number(feeBps), BigInt("18446744073709551615"), TP),
+      createInitializeMetadataPointerInstruction(mintKp.publicKey, active.publicKey, mintKp.publicKey, TP),
       createInitializeMintInstruction(mintKp.publicKey, dec, active.publicKey, null, TP),
+      createInitMetadataIx({ programId: TP, metadata: mintKp.publicKey, updateAuthority: active.publicKey, mint: mintKp.publicKey, mintAuthority: active.publicKey, name, symbol, uri: "" }),
       createAssociatedTokenAccountIdempotentInstruction(active.publicKey, myAta, active.publicKey, mintKp.publicKey, TP, ATAP),
       createMintToInstruction(mintKp.publicKey, myAta, active.publicKey, raw, [], TP)
     );
@@ -260,10 +265,11 @@ function Step1Mint() {
   return (
     <div className="step">
       <h4>Шаг 3.1. Создать токен {done && <Badge kind="ok">готово</Badge>}</h4>
-      <p className="muted">Token-2022 с налогом на переводы. Право менять налог не выдаётся никому (заморожен навсегда). Право сбора налога получает программа. Весь выпуск зачисляется на активный кошелёк.</p>
+      <p className="muted">Монета государства: Token-2022 с названием и символом, <b>без налога</b>. Она даёт только голос. Казна наполняется комиссией пула (шаг 3.5) и лежит в другом активе (SOL/USDC). Весь выпуск зачисляется на активный кошелёк.</p>
       <div className="row">
+        <Field label="Название"><TextIn value={name} onChange={setName} /></Field>
+        <Field label="Символ"><TextIn value={symbol} onChange={setSymbol} /></Field>
         <Field label="Знаков после запятой"><TextIn value={decimals} onChange={setDecimals} /></Field>
-        <Field label="Налог, bps (500 = 5%)"><TextIn value={feeBps} onChange={setFeeBps} /></Field>
         <Field label="Выпуск, токенов"><TextIn value={supply} onChange={setSupply} /></Field>
         <div className="row end"><Btn kind="primary" onClick={() => run("Создать токен", create)} disabled={!active}>Создать токен</Btn></div>
       </div>
@@ -271,9 +277,7 @@ function Step1Mint() {
         <div className="kvs">
           <Kv k="Токен" v={<Copy text={settings.mint}>{short(settings.mint)}</Copy>} />
           <Kv k="Выпуск" v={fmtRaw(data.mintInfo.supply, data.mintInfo.decimals)} />
-          <Kv k="Налог" v={data.mintInfo.feeBps === null ? "нет" : `${data.mintInfo.feeBps / 100}%`} />
-          <Kv k="Кто может менять налог" v={data.mintInfo.feeAuthority ? short(data.mintInfo.feeAuthority) : "никто (заморожен)"} />
-          <Kv k="Право забирать налог" v={short(data.mintInfo.withheldAuthority)} />
+          <Kv k="Налог на переводы" v="нет" />
           <Kv k="Право выпускать монеты" v={data.mintInfo.mintAuthority ? short(data.mintInfo.mintAuthority) : "нет"} />
         </div>
       )}
@@ -302,15 +306,15 @@ function Step2Init() {
         n("milestoneDepositBps"), n("spendCooldownSecs"), n("execFallbackSecs"), n("milestoneGraceSecs")
       )
       .accounts({
-        owner: active.publicKey, governanceMint: mint, config: P.config, treasury: P.treasury,
-        tokenProgram: TP, associatedTokenProgram: ATAP, systemProgram: SystemProgram.programId,
+        owner: active.publicKey, governanceMint: mint, treasuryMint: P.treasuryMint, config: P.config, treasury: P.treasury,
+        tokenProgram: TPT, associatedTokenProgram: ATAP, systemProgram: SystemProgram.programId,
       })
       .rpc(rpcOpts());
   };
   return (
     <div className="step">
       <h4>Шаг 3.2. Инициализировать государство {done && <Badge kind="ok">готово</Badge>}</h4>
-      <p className="muted">Создаёт запись Config и казну. Роли и параметры задаются здесь один раз; потом меняются только голосованием (порог гражданина и пауза: admin).</p>
+      <p className="muted">Создаёт запись Config и казну (счёт актива казны: {P?.treasuryMint.equals(WSOL) ? "wSOL" : short(P?.treasuryMint)}). Роли и параметры задаются здесь один раз; потом меняются только голосованием (порог гражданина и пауза: admin).</p>
       <div className="row">
         <Field label="Набор параметров">
           <select value={preset} onChange={(e) => { setPreset(e.target.value); setP({ ...PRESETS[e.target.value].p }); }}>
@@ -339,26 +343,32 @@ function Step2Init() {
 }
 
 function Step3Fund() {
-  const { active, data, run, provider, rpcOpts, P, mint } = useApp();
-  const [bps, setBps] = useState("500");
-  const dec = data.mintInfo?.decimals ?? 9;
+  const { active, data, run, provider, rpcOpts, P } = useApp();
+  const [amount, setAmount] = useState("0.5");
+  const dec = data.treasuryDecimals;
   const fund = async () => {
-    if (!active || !mint || !P || !data.mintInfo) throw new Error("Нет данных");
-    const raw = (data.mintInfo.supply * BigInt(bps)) / 10000n;
-    const fee = (raw * BigInt(data.mintInfo.feeBps ?? 0) + 9999n) / 10000n;
-    const tx = new Transaction().add(
-      createTransferCheckedWithFeeInstruction(P.ata(active.publicKey), mint, P.treasury, active.publicKey, raw, dec, fee, [], TP)
-    );
+    if (!active || !P) throw new Error("Нет данных");
+    const raw = BigInt(toRaw(amount || "0", dec).toString());
+    const tx = new Transaction();
+    if (P.treasuryMint.equals(WSOL)) {
+      // wrap SOL straight into the treasury account
+      tx.add(
+        SystemProgram.transfer({ fromPubkey: active.publicKey, toPubkey: P.treasury, lamports: Number(raw) }),
+        createSyncNativeInstruction(P.treasury, TPT)
+      );
+    } else {
+      tx.add(createTransferCheckedInstruction(P.tAta(active.publicKey), P.treasuryMint, P.treasury, active.publicKey, raw, dec, [], TPT));
+    }
     return provider.sendAndConfirm(tx, [], rpcOpts());
   };
   return (
     <div className="step">
-      <h4>Шаг 3.3. Стартовая казна {data.treasury && data.treasury > 0n ? <Badge kind="ok">готово</Badge> : null}</h4>
-      <p className="muted">Переводит долю от общего выпуска с активного кошелька (он должен держать токены) в казну. По решению owner'а: 5%. Налог удерживается.</p>
+      <h4>Шаг 3.3. Положить актив в казну (для теста) {data.treasury && data.treasury > 0n ? <Badge kind="ok">готово</Badge> : null}</h4>
+      <p className="muted">В работе казна наполняется комиссией пула (шаг 3.5), стартовой суммы не нужно. Для проверки голосований и зарплат можно положить SOL вручную: он заворачивается в wSOL прямо на счёт казны.</p>
       <div className="row">
-        <Field label="Доля выпуска, bps (500 = 5%)"><TextIn value={bps} onChange={setBps} /></Field>
+        <Field label={`Сумма, ${data.treasurySymbol}`}><TextIn value={amount} onChange={setAmount} /></Field>
         <div className="row end"><Btn kind="primary" onClick={() => run("Пополнить казну", fund)} disabled={!data.config}>Перевести в казну</Btn></div>
-        <Kv k="В казне сейчас" v={data.treasury === null ? "—" : fmtRaw(data.treasury, dec)} />
+        <Kv k="В казне сейчас" v={data.treasury === null ? "—" : `${fmtRaw(data.treasury, dec)} ${data.treasurySymbol}`} />
       </div>
     </div>
   );
@@ -371,7 +381,7 @@ function Step4MilestoneFund() {
     if (!active || !mint || !P) throw new Error("Нет данных");
     return program.methods
       .setupMilestoneFund()
-      .accounts({ owner: active.publicKey, governanceMint: mint, config: P.config, milestoneFund: P.milestoneFund, tokenProgram: TP, systemProgram: SystemProgram.programId })
+      .accounts({ owner: active.publicKey, config: P.config, treasuryMint: P.treasuryMint, milestoneFund: P.milestoneFund, tokenProgram: TPT, systemProgram: SystemProgram.programId })
       .rpc(rpcOpts());
   };
   return (
@@ -379,6 +389,49 @@ function Step4MilestoneFund() {
       <h4>Шаг 3.4. Создать фонд вех {done && <Badge kind="ok">готово</Badge>}</h4>
       <p className="muted">Отдельный счёт наград для «граждан». Пополняется только через голосование (тип «Пополнить фонд вех»). Делает owner.</p>
       <Btn kind="primary" onClick={() => run("Создать фонд вех", go)} disabled={!data.config}>Создать фонд вех</Btn>
+    </div>
+  );
+}
+
+function Step5Pool() {
+  const { active, data, run, program, rpcOpts, P, mint, settings } = useApp();
+  const [pool, setPool] = useState("");
+  const [nft, setNft] = useState("");
+  const done = !!data.pool;
+  const reg = async () => {
+    if (!active || !P || !mint) throw new Error("Нет данных");
+    const nftMint = pk(nft, "mint NFT позиции");
+    return program.methods
+      .registerPool()
+      .accounts({
+        owner: active.publicKey, config: P.config, governanceMint: mint, pool: pk(pool, "адрес пула"),
+        position: meteoraPosition(nftMint), positionNftAccount: meteoraNftAccount(nftMint), feeAAccount: P.feeA,
+        governanceTokenProgram: TP, associatedTokenProgram: ATAP, systemProgram: SystemProgram.programId,
+      })
+      .rpc(rpcOpts());
+  };
+  return (
+    <div className="step">
+      <h4>Шаг 3.5. Пул Meteora: источник казны {done && <Badge kind="ok">привязан</Badge>}</h4>
+      <p className="muted">
+        Пул (монета государства / актив казны) с постоянной комиссией 5% в активе казны создаётся в консоли скриптом <span className="mono">scripts/create_pool.ts</span>:
+        он же блокирует ликвидность навсегда и передаёт позицию государству. Здесь пул привязывается (один раз, только owner): контракт сам проверяет пару токенов,
+        режим комиссии и владельца позиции.
+      </p>
+      {!done && (
+        <div className="row">
+          <Field label="Адрес пула"><TextIn mono value={pool} onChange={setPool} placeholder="из вывода create_pool.ts" /></Field>
+          <Field label="Mint NFT позиции"><TextIn mono value={nft} onChange={setNft} placeholder="positionNft из вывода" /></Field>
+          <div className="row end"><Btn kind="primary" onClick={() => run("Привязать пул", reg)} disabled={!data.config || !active}>Привязать пул</Btn></div>
+        </div>
+      )}
+      {data.pool && (
+        <div className="kvs">
+          <Kv k="Пул" v={<Copy text={data.pool.pool.toBase58()}>{short(data.pool.pool)}</Copy>} />
+          <Kv k="Позиция" v={<Copy text={data.pool.position.toBase58()}>{short(data.pool.position)}</Copy>} />
+          <Kv k="Забрать комиссию" v="вкладка «Деньги»" />
+        </div>
+      )}
     </div>
   );
 }
