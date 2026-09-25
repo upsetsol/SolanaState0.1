@@ -3,7 +3,7 @@
 Смарт-контракт «государства на блокчейне»: налог на транзакции (Token-2022
 transfer-fee), казна, голосование холдеров по весам, роли
 (президент / минфин / минкульт), зарплаты, вехи капитализации (Milestone Fund),
-поддержка передачи прав на Squads-мультисиг.
+возможность передать права `owners_authority` другому адресу голосованием.
 
 > **Статус:** функционально проверено (юнит-тесты + `scripts/e2e.ts` 53/53 на
 > локальном валидаторе и на живом testnet), **не готово к мейннету**. Что остаётся закрыть —
@@ -34,7 +34,7 @@ npx ts-node scripts/create_mint.ts
 export GOVERNANCE_MINT=<адрес из вывода>
 
 # 2. инициализация
-OWNERS_AUTHORITY=<squads vault> ADMIN_AUTHORITY=<admin key/multisig> \
+OWNERS_AUTHORITY=<ключ owner'а> ADMIN_AUTHORITY=<ключ admin'а> \
 PARAMS=test \
 npx ts-node scripts/initialize.ts
 
@@ -151,7 +151,8 @@ ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node scripts/e2e.ts
 
 Последний прогон: **53/53 PASS** на локальном валидаторе и на живом Solana testnet (программа `FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy`). Devnet-копия — старая версия (46/46).
 
-Сценарные скрипты `scripts/test_*.ts` — точечные ручные проверки против devnet.
+Основные негативные сценарии покрыты `scripts/e2e.ts` и UI-тестом сайта (`web/tests`);
+скрипты `scripts/test_*.ts` — точечные ручные проверки против живого кластера.
 Полноценные интеграционные тесты (litesvm/bankrun) в CI — следующий шаг.
 
 ## Структура
