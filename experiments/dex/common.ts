@@ -12,7 +12,20 @@ import * as fs from "fs";
 import * as os from "os";
 
 export const RPC = process.env.RPC || "https://api.devnet.solana.com";
-export const connection = new Connection(RPC, "confirmed");
+// Public RPCs drop connections now and then (ECONNRESET / 429): retry the HTTP call a few times.
+const retryFetch = (async (input: any, init?: any) => {
+  for (let i = 0; ; i++) {
+    try {
+      const r = await fetch(input, init);
+      if ((r.status === 429 || r.status >= 500) && i < 6) { await new Promise((res) => setTimeout(res, 800 * (i + 1))); continue; }
+      return r;
+    } catch (e) {
+      if (i >= 6) throw e;
+      await new Promise((res) => setTimeout(res, 800 * (i + 1)));
+    }
+  }
+}) as typeof fetch;
+export const connection = new Connection(RPC, { commitment: "confirmed", fetch: retryFetch });
 export const payer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(fs.readFileSync((process.env.ANCHOR_WALLET || "~/.config/solana/id.json").replace("~", os.homedir()), "utf8")))
 );
