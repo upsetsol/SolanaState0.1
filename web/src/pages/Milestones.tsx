@@ -52,7 +52,7 @@ export default function Milestones() {
         <Kv k="Свободно для следующей вехи" v={data.fund === null ? "—" : fmtRaw(data.fund > BigInt(c.milestoneReserved.toString()) ? data.fund - BigInt(c.milestoneReserved.toString()) : 0n, dec)} />
       </Card>
       {[...recs].reverse().map((r) => (
-        <MilestoneCard key={r.n} n={r.n} pda={r.pda} d={r.d} snaps={snaps.filter((s) => s.account.milestoneNumber.toString() === String(r.n))} />
+        <MilestoneCard key={r.n} n={r.n} pda={r.pda} d={r.d} snaps={snaps.filter((s) => P!.mSnap(r.pda, s.account.holder).equals(s.publicKey))} />
       ))}
     </>
   );
