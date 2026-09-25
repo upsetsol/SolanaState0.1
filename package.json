@@ -8,10 +8,8 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
-    "@meteora-ag/cp-amm-sdk": "^1.4.5",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.95.0",
-    "@sqds/multisig": "^2.1.4",
     "bn.js": "^5.2.5"
   },
   "devDependencies": {

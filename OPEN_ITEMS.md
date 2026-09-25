@@ -126,12 +126,10 @@ Owner хочет, чтобы «5%» были **комиссией пула в SO
 
 ### 2.3 DEX-скрипты
 Актуальные проверки пулов Meteora — в `experiments/dex/` (свои зависимости, только devnet).
-Старые `scripts/damm_create_pool.ts` / `damm_swap.ts` устарели и подлежат удалению вместе с
-`scripts/squads_test_part1.ts` / `part2.ts` (мультисиг не нужен) и зависимостями `@meteora-ag/cp-amm-sdk`, `@sqds/multisig`.
-Точечные `scripts/test_*.ts`, повторяющие проверки `e2e.ts` / UI-теста, тоже можно убрать;
-не покрыты другими тестами и переносятся в `e2e.ts` при переписывании: `TimelockNotElapsed`
-(`test_timelock_precise`), `WrongRecipient` (`test_wrong_recipient` + `execute_wrong_recipient`),
-`NotOwner` при внесении снимка (`test_not_owner`).
+Устаревшие `scripts/damm_*.ts`, Squads-скрипты и дубли проверок `e2e.ts` удалены (см. историю git, коммит перед `chore: remove obsolete scripts`).
+Остались точечные проверки, которых нет в `e2e.ts`/UI-тесте: `TimelockNotElapsed` (`test_timelock_precise`),
+`WrongRecipient` (`test_wrong_recipient` + `execute_wrong_recipient`), `NotOwner` при внесении снимка (`test_not_owner`).
+При переписывании контракта их нужно перенести в `e2e.ts`.
 
 ### 2.4 Мелочи
 - `SpendTracker.role` теперь заполняется, но нигде не читается — косметика.
