@@ -236,7 +236,7 @@ pub mod onchain_state_solana {
     /// Sets up Config + treasury (an ATA of treasury_mint, owned by the Config PDA).
     /// governance_mint = the voting coin, treasury_mint = the asset the pool pays
     /// its fee in (wSOL / USDC / USDT). `token_program` is the treasury asset's program.
-    /// `owners_authority` (typically a Squads vault) posts vote snapshots and
+    /// `owners_authority` (the owner's key) posts vote snapshots and
     /// executes proposals. `admin_authority` (a separate key/multisig) can pause
     /// treasury outflows and tune the citizenship threshold. The payer signs and
     /// pays rent but gets no standing power. Ministers start vacant.
@@ -2100,7 +2100,7 @@ mod p0_tests {
         let day1 = 20_000 * SECONDS_PER_DAY + 100;
         refresh_treasury_snapshot(&mut cfg, 1_000, day1);
         assert_eq!(cfg.treasury_snapshot_amount, 1_000);
-        // same day, bigger balance (e.g. harvest) — snapshot must NOT move
+        // same day, bigger balance (e.g. a fee claim) — snapshot must NOT move
         refresh_treasury_snapshot(&mut cfg, 5_000, day1 + 500);
         assert_eq!(cfg.treasury_snapshot_amount, 1_000);
         // next day — refreshes
