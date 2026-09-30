@@ -13,11 +13,25 @@ const waitText = async (loc, re, timeout = 150000) => {
   while (Date.now() - t0 < timeout) { if (re.test(await loc.innerText())) return true; await p.waitForTimeout(2500); }
   return false;
 };
-const snapAll = async (id) => {
+const rowCount = (re) => t.rows().filter({ hasText: re }).count();
+const waitRows = async (re, n, timeout = 90000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) { if ((await rowCount(re)) >= n) return true; await p.waitForTimeout(1000); }
+  return false;
+};
+// v4.1: the owner enrols everybody from ONE scan («Внести всем держателям (один скан)»), then starts the voting («Начать голосование»)
+const snapAll = async (id, holders = 4) => {
   const c = card(id);
-  await c.locator("summary").click();
-  await c.getByRole("button", { name: "Внести всем держателям", exact: true }).click();
-  await p.waitForTimeout(2500); await t.settle(); await p.waitForTimeout(1500); await t.settle();
+  const before = await rowCount(/Снимок для/);
+  await c.locator("summary").first().click();
+  await c.getByRole("button", { name: "Внести всем держателям (один скан)", exact: true }).click();
+  await waitRows(/Снимок для/, before + holders);
+  await p.waitForTimeout(1200); await t.settle();
+};
+const openV = async (id) => {
+  const c = card(id);
+  if (!(await c.locator("details").first().evaluate((el) => el.open))) await c.locator("summary").first().click();
+  return actIn(c, "Начать голосование");
 };
 const voteAs = async (walletIdx, id, support) => {
   await t.setActive(walletIdx);
@@ -39,6 +53,9 @@ try {
   for (let i = 0; i < 4; i++) await t.act("Airdrop", { nth: i });
   await t.setActive(0);
   t.expectOk("создать токен", await t.act("Создать токен"));
+  // the voting clock now starts at «Начать голосование»; give the UI actions of one round 60 s instead of the fast profile's 30 s
+  await p.locator("summary", { hasText: "Параметры (" }).click();
+  await t.fill("Голосование, сек", 60);
   t.expectOk("инициализировать государство", await t.act("Инициализировать"));
   t.expectOk("положить 0.5 SOL в казну (wSOL)", await t.act("Перевести в казну"));
   t.expectOk("создать фонд вех", await t.act("Создать фонд вех"));
@@ -56,6 +73,12 @@ try {
   t.check("оба предложения видны в списке", (await p.locator(".prop").count()) === 2);
   await snapAll(0); await snapAll(1);
   t.check("снимки внесены (4 холдера × 2)", (await t.rows().filter({ hasText: "Снимок для" }).count()) >= 8, `строк журнала: ${await t.rows().filter({ hasText: "Снимок для" }).count()}`);
+  // v4.1: until the owner presses «Начать голосование» nobody can vote, and afterwards nobody can be enrolled any more
+  t.check("до старта статус «Идёт запись избирателей»", /Идёт запись избирателей/.test(await card(0).innerText()));
+  t.check("до старта кнопки «Голосовать» заблокированы", await card(0).getByRole("button", { name: "Голосовать «за»", exact: true }).isDisabled());
+  t.expectOk("owner начинает голосование #0", await openV(0));
+  t.expectOk("owner начинает голосование #1", await openV(1));
+  t.check("после старта снимки больше не принимаются", await card(0).getByRole("button", { name: "Внести всем держателям (один скан)", exact: true }).isDisabled());
   // votes: #0 for(W1,W2) against(W3); #1 for(W1,W2)
   t.expectOk("W1 голос «за» #0", await voteAs(0, 0, true));
   t.expectOk("W1 голос «за» #1", await actIn(card(1), "Голосовать «за»"));
@@ -80,9 +103,19 @@ try {
   t.expectOk("#1 после паузы исполняется", await actIn(card(1), "Исполнить"));
   t.expectErr("повторное исполнение #0 → AlreadyExecuted", await actIn(card(0), "Исполнить"), "AlreadyExecuted");
 
+  // ---------- clean-up of a finished proposal (v4.1): the rent goes back ----------
+  const closedBefore = await rowCount(/Закрыть снимок/);
+  await card(0).getByRole("button", { name: "Закрыть снимки этого предложения (вернуть аренду)", exact: true }).click();
+  t.check("закрыты все 4 снимка предложения #0", await waitRows(/Закрыть снимок/, closedBefore + 4));
+  await p.waitForTimeout(1000); await t.settle();
+  const badClose = await t.rows().filter({ hasText: /Закрыть снимок/ }).evaluateAll((els) => els.filter((e) => e.className.includes("err")).length);
+  t.check("закрытие снимков прошло без ошибок", badClose === 0, `с ошибкой: ${badClose}`);
+  t.expectOk("закрыть исполненное предложение #0 (аренда → создателю)", await actIn(card(0), "Закрыть предложение"));
+  t.check("закрытое предложение #0 исчезло из списка", await (async () => { for (let i = 0; i < 12; i++) { if ((await card(0).count()) === 0) return true; await p.waitForTimeout(2500); } return false; })());
+
   // ---------- roles ----------
   t.expectOk("создать: назначить W3 министром финансов", await createProposal({ type: 2, target: pks[2], reason: "finance minister" }));
-  await snapAll(2);
+  await snapAll(2); await openV(2);
   await voteAs(0, 2, true); await voteAs(1, 2, true);
   t.check("#2 дошло до исполнения", await waitText(card(2), /Готово к исполнению/));
   await t.setActive(0);
@@ -90,7 +123,7 @@ try {
   await t.tab("Обзор");
   t.check("Обзор показывает министра финансов", !(await t.text()).match(/Министр финансов\s*\n?\s*вакантно/));
   t.expectOk("создать: назначить W3 ещё и президентом (конфликт ролей)", await createProposal({ type: 1, target: pks[2], reason: "conflict" }));
-  await snapAll(3);
+  await snapAll(3); await openV(3);
   await voteAs(0, 3, true); await voteAs(1, 3, true);
   t.check("#3 дошло до исполнения", await waitText(card(3), /Готово к исполнению/));
   await t.setActive(0);
@@ -121,7 +154,7 @@ try {
   // ---------- milestone ----------
   await p.waitForTimeout(3000);
   t.expectOk("создать: пополнить фонд вех 0.03 SOL", await createProposal({ type: 6, amount: 0.03, reason: "fund milestone" }));
-  await snapAll(4);
+  await snapAll(4); await openV(4);
   await voteAs(0, 4, true); await voteAs(1, 4, true);
   t.check("#4 дошло до исполнения", await waitText(card(4), /Готово к исполнению/));
   await t.setActive(0);
