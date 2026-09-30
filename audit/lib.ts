@@ -49,14 +49,15 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- results
 export type Verdict = "BLOCKED" | "EXPLOITABLE" | "OK" | "INFO" | "ERROR";
-export interface Row { group: string; id: string; title: string; verdict: Verdict; note?: string }
+export type Status = "FIXED" | "ACCEPTED" | "PENDING" | "";
+export interface Row { group: string; id: string; title: string; verdict: Verdict; note?: string; status?: Status }
 export const rows: Row[] = [];
 let curGroup = "";
 export function group(name: string) { curGroup = name; console.log(`\n=== ${name} ===`); }
 const ICON: Record<Verdict, string> = { BLOCKED: "🛡️ BLOCKED    ", EXPLOITABLE: "⚠️ EXPLOITABLE", OK: "✅ OK         ", INFO: "ℹ️ INFO       ", ERROR: "❌ ERROR      " };
-export function record(id: string, title: string, verdict: Verdict, note?: string) {
-  rows.push({ group: curGroup, id, title, verdict, note });
-  console.log(`${ICON[verdict]} [${id}] ${title}${note ? "  — " + note : ""}`);
+export function record(id: string, title: string, verdict: Verdict, note?: string, status: Status = "") {
+  rows.push({ group: curGroup, id, title, verdict, note, status });
+  console.log(`${ICON[verdict]} [${id}] ${title}${note ? "  — " + note : ""}${status ? "  {" + status + "}" : ""}`);
 }
 export function errText(e: any): string {
   const parts = [e?.error?.errorCode?.code, e?.error?.errorMessage, e?.message, ...(e?.logs ?? []), ...(e?.transactionLogs ?? [])];
@@ -227,7 +228,7 @@ export async function makeWorld(o: WorldOpts) {
   const trackerPda = (role: number) => PublicKey.findProgramAddressSync([Buffer.from("spend_tracker"), configPda.toBuffer(), Buffer.from([role])], PROGRAM_ID)[0];
   const milestonePda = (n: any) => PublicKey.findProgramAddressSync([Buffer.from("milestone"), configPda.toBuffer(), u64(n)], PROGRAM_ID)[0];
   const mSnapPda = (m: PublicKey, h: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("milestone_snap"), m.toBuffer(), h.toBuffer()], PROGRAM_ID)[0];
-  const payrollPda = (x: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("payroll"), configPda.toBuffer(), x.toBuffer()], PROGRAM_ID)[0];
+  const payrollPda = (role: number) => PublicKey.findProgramAddressSync([Buffer.from("payroll"), configPda.toBuffer(), Buffer.from([role])], PROGRAM_ID)[0];
   const bal = async (a: PublicKey): Promise<bigint> => { try { return (await getAccount(conn, a, "confirmed", TP)).amount; } catch { return -1n; } };
   const tbal = async (a: PublicKey): Promise<bigint> => { try { return (await getAccount(conn, a, "confirmed", TPT)).amount; } catch { return -1n; } };
   const cfg = async () => program.account.config.fetch(configPda);
@@ -296,19 +297,25 @@ export async function makeWorld(o: WorldOpts) {
     owner, config: configPda, proposal: pPda, voterTokenAccount: voterTokenAccount ?? ata(voter),
     voterSnapshot: snapPda(pPda, voter), systemProgram: SystemProgram.programId,
   });
-  async function snapshot(id: any, pPda: PublicKey, voter: PublicKey, by: Keypair = payer, voterTokenAccount?: PublicKey) {
-    await progFor(by).methods.postVoterSnapshot(new anchor.BN(id.toString()), voter).accounts(snapAccts(pPda, voter, by.publicKey, voterTokenAccount)).rpc();
+  /** Post a snapshot. `weight` = what the owner's scan saw; by default the voter's balance RIGHT NOW (an honest, immediate scan). */
+  async function snapshot(id: any, pPda: PublicKey, voter: PublicKey, by: Keypair = payer, voterTokenAccount?: PublicKey, weight?: bigint) {
+    const wgt = weight ?? (await bal(voterTokenAccount ?? ata(voter)));
+    await progFor(by).methods.postVoterSnapshot(new anchor.BN(id.toString()), voter, new anchor.BN(wgt.toString())).accounts(snapAccts(pPda, voter, by.publicKey, voterTokenAccount)).rpc();
+  }
+  /** The owner closes the enrolment: votes are accepted from now on and the quorum base is frozen. */
+  async function openVoting(id: any, opts: { excludedOverride?: PublicKey | null } = {}, by: Keypair = payer) {
+    await progFor(by).methods.openVoting(new anchor.BN(id.toString()))
+      .accounts({ owner: by.publicKey, config: configPda, governanceMint: mint.publicKey, proposal: proposalPda(id), quorumExcluded: opts.excludedOverride !== undefined ? opts.excludedOverride : await excl() }).rpc();
   }
   async function vote(kp: Keypair, id: any, pPda: PublicKey, support: boolean, snapshotOf?: PublicKey) {
     await progFor(kp).methods.vote(new anchor.BN(id.toString()), support)
       .accounts({ voter: kp.publicKey, config: configPda, proposal: pPda, voterSnapshot: snapPda(pPda, snapshotOf ?? kp.publicKey) }).rpc();
   }
-  async function execute(id: any, opts: { recipient?: PublicKey; milestoneFund?: boolean; excludedOverride?: PublicKey | null } = {}, who: Keypair = payer) {
+  async function execute(id: any, opts: { recipient?: PublicKey; milestoneFund?: boolean } = {}, who: Keypair = payer) {
     await progFor(who).methods.executeProposal(new anchor.BN(id.toString()))
       .accounts({
-        executor: who.publicKey, config: configPda, governanceMint: mint.publicKey, treasuryMint: NATIVE_MINT, proposal: proposalPda(id), treasury,
-        recipientTokenAccount: opts.recipient ?? null, milestoneFund: opts.milestoneFund ? milestoneFundPda : null,
-        quorumExcluded: opts.excludedOverride !== undefined ? opts.excludedOverride : await excl(), tokenProgram: TPT,
+        executor: who.publicKey, config: configPda, treasuryMint: NATIVE_MINT, proposal: proposalPda(id), treasury,
+        recipientTokenAccount: opts.recipient ?? null, milestoneFund: opts.milestoneFund ? milestoneFundPda : null, tokenProgram: TPT,
       }).rpc();
   }
   const proposalOf = async (pPda: PublicKey) => program.account.proposal.fetch(pPda);
@@ -322,13 +329,14 @@ export async function makeWorld(o: WorldOpts) {
     await program.methods.createMilestone().accounts({ owner: me, config: configPda, milestoneRecord: m, systemProgram: SystemProgram.programId }).rpc();
     return { n, m };
   }
-  async function msSnap(n: any, m: PublicKey, h: PublicKey, holderTokenAccount?: PublicKey) {
-    await program.methods.postMilestoneSnapshot(new anchor.BN(n.toString()), h)
+  async function msSnap(n: any, m: PublicKey, h: PublicKey, holderTokenAccount?: PublicKey, weight?: bigint) {
+    const wgt = weight ?? (await bal(holderTokenAccount ?? ata(h)));
+    await program.methods.postMilestoneSnapshot(new anchor.BN(n.toString()), h, new anchor.BN(wgt.toString()))
       .accounts({ owner: me, config: configPda, governanceMint: mint.publicKey, milestoneRecord: m, holderTokenAccount: holderTokenAccount ?? ata(h), milestoneSnapshot: mSnapPda(m, h), systemProgram: SystemProgram.programId }).rpc();
   }
   async function msFinalize(n: any, m: PublicKey, prev: PublicKey | null = null) {
     await program.methods.finalizeMilestone(new anchor.BN(n.toString()))
-      .accounts({ owner: me, config: configPda, milestoneRecord: m, previousMilestone: prev, milestoneFund: milestoneFundPda }).rpc();
+      .accounts({ owner: me, config: configPda, milestoneRecord: m, previousMilestone: prev, milestoneFund: milestoneFundPda, governanceMint: mint.publicKey }).rpc();
   }
   const claimAccts = (m: PublicKey, h: PublicKey, payerKey: PublicKey = me, dest?: PublicKey) => ({
     payer: payerKey, config: configPda, treasuryMint: NATIVE_MINT, milestoneRecord: m, milestoneSnapshot: mSnapPda(m, h),
@@ -398,7 +406,7 @@ export async function makeWorld(o: WorldOpts) {
     name: o.name, P, payer, me, provider, program, mint, myAta, supply, configPda, treasury, milestoneFundPda, feeAAccount, poolAddr,
     tAta, ata, proposalPda, snapPda, trackerPda, milestonePda, mSnapPda, payrollPda, bal, tbal, cfg, excl, supplyNow, solOf,
     holder, transferCoins, seedTreasury, fundMilestoneDirect, ensureT,
-    createAccts, propose, snapshot, vote, execute, proposalOf, deadlineOf, waitExecutable, snapAccts,
+    createAccts, propose, snapshot, openVoting, vote, execute, proposalOf, deadlineOf, waitExecutable, snapAccts,
     createMilestone, msSnap, msFinalize, msClaim, claimAccts,
     withPool, swap, poolVaultA, poolVaultB, claimFeesAccts, cpAmm, get poolInfo() { return poolInfo; },
   };
@@ -410,7 +418,7 @@ export function finish(file: string) {
   for (const r of rows) c[r.verdict] = (c[r.verdict] ?? 0) + 1;
   console.log("\n================ SUMMARY ================");
   console.log(c);
-  for (const r of rows.filter((x) => x.verdict === "EXPLOITABLE")) console.log(`  ⚠️  [${r.id}] ${r.title} — ${r.note ?? ""}`);
+  for (const r of rows.filter((x) => x.verdict === "EXPLOITABLE")) console.log(`  ⚠️  [${r.id}] ${r.title} — ${r.note ?? ""}${r.status ? "  {" + r.status + "}" : ""}`);
   for (const r of rows.filter((x) => x.verdict === "ERROR")) console.log(`  ❌ [${r.id}] ${r.title} — ${r.note ?? ""}`);
   fs.writeFileSync(file, JSON.stringify(rows, null, 2));
   console.log("results →", file);

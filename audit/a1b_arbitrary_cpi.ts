@@ -24,7 +24,7 @@ async function main() {
     await progFor(atk).methods.claimMilestone(new anchor.BN(ms.n.toString()), A.publicKey).accounts({ ...w.claimAccts(ms.m, A.publicKey, atk.publicKey), tokenProgram: FAKE }).rpc();
   });
   await expectBlocked("A1b.2", "claim_salary with a fake token program", CODES, async () => {
-    await progFor(atk).methods.claimSalary().accounts({ claimant: atk.publicKey, config: w.configPda, treasuryMint: NATIVE_MINT, payrollClaim: w.payrollPda(atk.publicKey), treasury: w.treasury, claimantTokenAccount: w.tAta(atk.publicKey), tokenProgram: FAKE, systemProgram: SystemProgram.programId }).rpc();
+    await progFor(atk).methods.claimSalary(0).accounts({ claimant: atk.publicKey, config: w.configPda, treasuryMint: NATIVE_MINT, payrollClaim: w.payrollPda(0), treasury: w.treasury, claimantTokenAccount: w.tAta(atk.publicKey), tokenProgram: FAKE, systemProgram: SystemProgram.programId }).rpc();
   });
   await expectBlocked("A1b.3", "minister_spend with a fake token program", CODES, async () => {
     await progFor(atk).methods.ministerSpend(1, new anchor.BN(1), "x").accounts({ minister: atk.publicKey, config: w.configPda, treasuryMint: NATIVE_MINT, spendTracker: w.trackerPda(1), treasury: w.treasury, recipientTokenAccount: w.tAta(atk.publicKey), tokenProgram: FAKE, systemProgram: SystemProgram.programId }).rpc();

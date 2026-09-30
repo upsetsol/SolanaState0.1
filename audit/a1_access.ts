@@ -39,6 +39,7 @@ async function main() {
   // ---- vote / snapshot spoofing
   const p = await w.propose(0, A.publicKey, SOL / 100n, 0, "spend for A");
   await w.snapshot(p.id, p.pPda, A.publicKey);
+  await w.openVoting(p.id);
   await expectBlocked("A1.4", "attacker votes using the WHALE's snapshot (signs as himself, passes A's snapshot PDA)", ["ConstraintSeeds", "2006"], () =>
     w.vote(atk, p.id, p.pPda, true, A.publicKey));
   await expectBlocked("A1.5", "owner-side: snapshot for the attacker's key but reading the WHALE's token account", "SnapshotAccountMismatch", () =>
@@ -47,7 +48,7 @@ async function main() {
 
   // ---- role / admin gates
   await expectBlocked("A1.7", "claim_salary by a random wallet", "NotEligibleForPayroll", () =>
-    progFor(atk).methods.claimSalary().accounts({ claimant: atk.publicKey, config: w.configPda, treasuryMint: NATIVE_MINT, payrollClaim: w.payrollPda(atk.publicKey), treasury: w.treasury, claimantTokenAccount: w.tAta(atk.publicKey), tokenProgram: TPT, systemProgram: SystemProgram.programId }).rpc());
+    progFor(atk).methods.claimSalary(0).accounts({ claimant: atk.publicKey, config: w.configPda, treasuryMint: NATIVE_MINT, payrollClaim: w.payrollPda(0), treasury: w.treasury, claimantTokenAccount: w.tAta(atk.publicKey), tokenProgram: TPT, systemProgram: SystemProgram.programId }).rpc());
   for (const role of [1, 2]) {
     await expectBlocked(`A1.8.${role}`, `minister_spend(role=${role}) by a random wallet`, "NotMinister", () =>
       progFor(atk).methods.ministerSpend(role, new anchor.BN(1), "grab").accounts({ minister: atk.publicKey, config: w.configPda, treasuryMint: NATIVE_MINT, spendTracker: w.trackerPda(role), treasury: w.treasury, recipientTokenAccount: w.tAta(atk.publicKey), tokenProgram: TPT, systemProgram: SystemProgram.programId }).rpc());
@@ -108,17 +109,18 @@ async function main() {
   const dep = await w.propose(6, w.me, SOL / 20n, 0, "deposit");
   await w.snapshot(dep.id, dep.pPda, A.publicKey);
   await w.snapshot(dep.id, dep.pPda, B.publicKey);
+  await expectBlocked("A1.28", "open_voting with the pool vault OMITTED (to shrink the frozen quorum base)", "ExcludedAccountMissing", () =>
+    w.openVoting(dep.id, { excludedOverride: null }));
+  await w.openVoting(dep.id);
   await w.vote(A, dep.id, dep.pPda, true);
   await w.vote(B, dep.id, dep.pPda, true);
   await w.waitExecutable(dep.pPda);
   await expectBlocked("A1.27", "execute the milestone-deposit proposal with the ATTACKER's wSOL account as 'milestone fund'", "MilestoneFundMissing", async () => {
     await progFor(w.payer).methods.executeProposal(new anchor.BN(dep.id.toString())).accounts({
-      executor: w.me, config: w.configPda, governanceMint: w.mint.publicKey, treasuryMint: NATIVE_MINT, proposal: dep.pPda, treasury: w.treasury,
-      recipientTokenAccount: null, milestoneFund: w.tAta(atk.publicKey), quorumExcluded: await w.excl(), tokenProgram: TPT,
+      executor: w.me, config: w.configPda, treasuryMint: NATIVE_MINT, proposal: dep.pPda, treasury: w.treasury,
+      recipientTokenAccount: null, milestoneFund: w.tAta(atk.publicKey), tokenProgram: TPT,
     }).rpc();
   });
-  await expectBlocked("A1.28", "execute with the pool vault OMITTED (to shrink the quorum base)", "ExcludedAccountMissing", () =>
-    w.execute(dep.id, { milestoneFund: true, excludedOverride: null }));
   await must("A1.29", "control: the same proposal executes with the right accounts", () => w.execute(dep.id, { milestoneFund: true }));
 
   finish("audit/results_a1.json");
