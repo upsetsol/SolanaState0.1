@@ -1,0 +1,72 @@
+[
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.0",
+    "title": "world: 1B coins, 30% in the pool, quorum(spend)=3% of the voting base",
+    "verdict": "INFO",
+    "note": "base=700000000 coins, quorum=21000000 coins"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.1",
+    "title": "wallet hopping between two owner snapshot transactions: 200M real coins voted three times",
+    "verdict": "EXPLOITABLE",
+    "note": "counted for=600M vs against=210M, though A really owns 200M (honest tally: 200M vs 210M = REJECTED). Counted weight = 3.0× his real stack. Proposal executed=true"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.1c",
+    "title": "control: without hopping the same 200M-vs-210M vote is REJECTED (so the hop is what flipped A2.1)",
+    "verdict": "OK",
+    "note": "rejected=true"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.2",
+    "title": "electorate lock-out: first snapshotted voter votes immediately → D (15%) and B (6%) can never get a snapshot",
+    "verdict": "EXPLOITABLE",
+    "note": "D locked out=true, B locked out=true; proposal (0.5 SOL out of the treasury) executed with only the whale's vote=true"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.2c",
+    "title": "control: with the whole electorate enrolled first, the same vote is REJECTED (so the lock-out is what flipped A2.2)",
+    "verdict": "OK",
+    "note": "rejected=true"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.3",
+    "title": "buy → owner snapshots → sell everything → still votes with the full weight",
+    "verdict": "EXPLOITABLE",
+    "note": "weight counted=60M coins (6.06% of supply) while he holds 249498537 afterwards. Cost of renting them = 0.7780 SOL (9.7% of the 8 SOL he spent buying; both 5% fees + slippage)"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.4",
+    "title": "quorum veto: after the vote passed, a trader BUYS coins out of the pool → QuorumNotReached; sells back → executes",
+    "verdict": "EXPLOITABLE",
+    "note": "voter had 21100000 coins vs quorum 21000000 (margin 0.5%); the attacker only had to pull 4675960 coins (0.67% of the base) out of the pool; the whole veto cost him 0.0467 SOL; after he sold back the same proposal executed=true"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.5",
+    "title": "quorum push: proposal is 0.05M coins short; a holder SELLS 3M coins into the pool → base shrinks → it now passes",
+    "verdict": "EXPLOITABLE",
+    "note": "short of quorum before=true; quorum met after the dump=true; executed=true"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.6",
+    "title": "create a proposal with coins that are sold right afterwards (threshold is checked on the LIVE balance)",
+    "verdict": "EXPLOITABLE",
+    "note": "created=true ; holds 430720778 afterwards; total cost incl. rent and both 5% fees=0.1961 SOL"
+  },
+  {
+    "group": "A2 voting integrity + trading",
+    "id": "A2.7",
+    "title": "mint authority still alive: minting 10B new coins makes a passed proposal fail its quorum (and would give the minter any majority)",
+    "verdict": "EXPLOITABLE",
+    "note": "supply 1000000000 → 11000000000 coins; execute → QuorumNotReached=true"
+  }
+]

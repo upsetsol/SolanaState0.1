@@ -1,0 +1,16 @@
+[
+  {
+    "group": "A8 hidden position delegate",
+    "id": "A8.0",
+    "title": "setup: a delegate WAS approved on the position-NFT account before the hand-over",
+    "verdict": "INFO",
+    "note": "delegate before hand-over: 2qk9C5Kt"
+  },
+  {
+    "group": "A8 hidden position delegate",
+    "id": "A8.1",
+    "title": "…does the delegate survive SetAuthority(owner → Config PDA) and register_pool?",
+    "verdict": "BLOCKED",
+    "note": "after hand-over: owner=5LfHWRuV (Config PDA 5LfHWRuV), delegate=None, delegated amount=0"
+  }
+]
