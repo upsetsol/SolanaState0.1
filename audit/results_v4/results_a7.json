@@ -1,0 +1,16 @@
+[
+  {
+    "group": "A7 rogue owner",
+    "id": "A7.1",
+    "title": "owner key alone empties the citizens' milestone fund into his own wallet: snapshot only himself, finalize, claim — five times in a row, no vote, no timelock",
+    "verdict": "EXPLOITABLE",
+    "note": "#1: fund left 7.000 SOL | #2: fund left 4.550 SOL | #3: fund left 2.730 SOL | #4: fund left 1.502 SOL | #5: fund left 0.751 SOL → owner took 9.249 of 10 SOL (92.5%), the honest 6% holder got 0"
+  },
+  {
+    "group": "A7 rogue owner",
+    "id": "A7.2",
+    "title": "owner enrols only himself (he holds 94% of the coins) and votes SPEND-to-himself three times in a row",
+    "verdict": "EXPLOITABLE",
+    "note": "#1 took 1.450 SOL | #2 took 1.030 SOL | #3 took 0.731 SOL → treasury 5.00 → 1.79 SOL (36% left, 0.71^n); each round needs only vote+timelock, nobody else could vote"
+  }
+]

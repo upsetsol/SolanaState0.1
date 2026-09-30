@@ -3,214 +3,245 @@
     "group": "A1 access control",
     "id": "A1.0",
     "title": "world ready: 1B coins, 30% in a real Meteora pool, 5 SOL in the treasury",
-    "verdict": "INFO"
+    "verdict": "INFO",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.1",
     "title": "create_proposal signed by the attacker but with the WHALE's token account (to fake the 1% threshold)",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintRaw"
+    "note": "rejected: ConstraintRaw",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.2",
     "title": "create_proposal by a holder below the threshold (0.2% < 1%)",
     "verdict": "BLOCKED",
-    "note": "rejected: BelowThreshold"
+    "note": "rejected: BelowThreshold",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.3",
     "title": "create_proposal passing a fake 'pool vault' (whale's account) as quorum_excluded",
     "verdict": "BLOCKED",
-    "note": "rejected: ExcludedAccountMissing"
+    "note": "rejected: ExcludedAccountMissing",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.4",
     "title": "attacker votes using the WHALE's snapshot (signs as himself, passes A's snapshot PDA)",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintSeeds"
+    "note": "rejected: ConstraintSeeds",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.5",
     "title": "owner-side: snapshot for the attacker's key but reading the WHALE's token account",
     "verdict": "BLOCKED",
-    "note": "rejected: SnapshotAccountMismatch"
+    "note": "rejected: SnapshotAccountMismatch",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.6",
     "title": "vote by a wallet that has NO snapshot",
     "verdict": "BLOCKED",
-    "note": "rejected: AccountNotInitialized"
+    "note": "rejected: AccountNotInitialized",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.7",
     "title": "claim_salary by a random wallet",
     "verdict": "BLOCKED",
-    "note": "rejected: NotEligibleForPayroll"
+    "note": "rejected: NotEligibleForPayroll",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.8.1",
     "title": "minister_spend(role=1) by a random wallet",
     "verdict": "BLOCKED",
-    "note": "rejected: NotMinister"
+    "note": "rejected: NotMinister",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.8.2",
     "title": "minister_spend(role=2) by a random wallet",
     "verdict": "BLOCKED",
-    "note": "rejected: NotMinister"
+    "note": "rejected: NotMinister",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.9",
     "title": "minister_spend with an invalid role byte (0 / 7)",
     "verdict": "BLOCKED",
-    "note": "rejected: NotMinister"
+    "note": "rejected: NotMinister",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.10",
     "title": "set_pause by a non-admin",
     "verdict": "BLOCKED",
-    "note": "rejected: NotAdmin"
+    "note": "rejected: NotAdmin",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.11",
     "title": "set_citizenship_threshold by a non-admin",
     "verdict": "BLOCKED",
-    "note": "rejected: NotAdmin"
+    "note": "rejected: NotAdmin",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.12",
     "title": "setup_milestone_fund called again / by a non-owner",
     "verdict": "BLOCKED",
-    "note": "rejected: already in use"
+    "note": "rejected: already in use",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.13",
     "title": "create_milestone by a non-owner",
     "verdict": "BLOCKED",
-    "note": "rejected: NotOwner"
+    "note": "rejected: NotOwner",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.14",
     "title": "re-initialize an already initialised state (take over an existing Config)",
     "verdict": "BLOCKED",
-    "note": "rejected: already in use"
+    "note": "rejected: already in use",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.15",
     "title": "claim_pool_fees with the attacker's 'token A' fee account",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintTokenOwner"
+    "note": "rejected: ConstraintTokenOwner",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.16",
     "title": "claim_pool_fees with a FAKE Meteora program (to get the Config PDA's signature on an arbitrary CPI)",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintAddress"
+    "note": "rejected: ConstraintAddress",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.17",
     "title": "claim_pool_fees with a different pool account",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintAddress"
+    "note": "rejected: ConstraintAddress",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.18",
     "title": "claim_pool_fees with a different position / NFT account",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintAddress"
+    "note": "rejected: ConstraintAddress",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.19",
     "title": "claim_pool_fees where the attacker swaps in HIS OWN wSOL account as the treasury",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintAddress"
+    "note": "rejected: ConstraintAddress",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.20",
     "title": "register_pool by the attacker (already registered + not owner)",
     "verdict": "BLOCKED",
-    "note": "rejected: NotOwner"
+    "note": "rejected: NotOwner",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.21",
     "title": "claim_milestone: attacker pushes WHALE's payout into HIS OWN wSOL account",
     "verdict": "BLOCKED",
-    "note": "rejected: WrongRecipient"
+    "note": "rejected: WrongRecipient",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.22",
     "title": "claim_milestone: a stranger pays WHALE's share to the whale's own account (allowed by design)",
-    "verdict": "OK"
+    "verdict": "OK",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.23",
     "title": "…and the attacker received nothing from that call",
     "verdict": "BLOCKED",
-    "note": "attacker wSOL 0→0, whale 0→461538461"
+    "note": "attacker wSOL 0→0, whale 0→461538461",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.24",
     "title": "claim_milestone a second time for the same holder",
     "verdict": "BLOCKED",
-    "note": "rejected: AlreadyClaimedMilestone"
+    "note": "rejected: AlreadyClaimedMilestone",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.25",
     "title": "post_milestone_snapshot after the milestone is finalized",
     "verdict": "BLOCKED",
-    "note": "rejected: MilestoneFinalized"
+    "note": "rejected: MilestoneFinalized",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.26",
     "title": "vote after the voting period ended",
     "verdict": "BLOCKED",
-    "note": "rejected: ProposalNotActive"
+    "note": "rejected: ProposalNotActive",
+    "status": ""
+  },
+  {
+    "group": "A1 access control",
+    "id": "A1.28",
+    "title": "open_voting with the pool vault OMITTED (to shrink the frozen quorum base)",
+    "verdict": "BLOCKED",
+    "note": "rejected: ExcludedAccountMissing",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.27",
     "title": "execute the milestone-deposit proposal with the ATTACKER's wSOL account as 'milestone fund'",
     "verdict": "BLOCKED",
-    "note": "rejected: MilestoneFundMissing"
-  },
-  {
-    "group": "A1 access control",
-    "id": "A1.28",
-    "title": "execute with the pool vault OMITTED (to shrink the quorum base)",
-    "verdict": "BLOCKED",
-    "note": "rejected: ExcludedAccountMissing"
+    "note": "rejected: MilestoneFundMissing",
+    "status": ""
   },
   {
     "group": "A1 access control",
     "id": "A1.29",
     "title": "control: the same proposal executes with the right accounts",
-    "verdict": "OK"
+    "verdict": "OK",
+    "status": ""
   }
 ]

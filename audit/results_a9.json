@@ -1,0 +1,106 @@
+[
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.1",
+    "title": "a stranger closes a proposal that is still ENROLLING (voting not open yet) to grief the creator",
+    "verdict": "BLOCKED",
+    "note": "rejected: NotFinishedYet",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.2",
+    "title": "a stranger closes a voter snapshot while the proposal is still enrolling (to strip a voter before the vote)",
+    "verdict": "BLOCKED",
+    "note": "rejected: NotFinishedYet",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.3",
+    "title": "a stranger closes a proposal while its voting is running",
+    "verdict": "BLOCKED",
+    "note": "rejected: NotFinishedYet",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.4",
+    "title": "a stranger closes a voter's snapshot while the voting is running (to keep that voter from voting)",
+    "verdict": "BLOCKED",
+    "note": "rejected: NotFinishedYet",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.5",
+    "title": "control: the proposal passes and executes",
+    "verdict": "OK",
+    "note": "",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.6",
+    "title": "rent theft: a stranger closes the finished proposal but names HIMSELF as the creator to receive the rent",
+    "verdict": "BLOCKED",
+    "note": "rejected: ConstraintHasOne",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.7",
+    "title": "rent theft: a stranger closes a snapshot after the vote but names HIMSELF as the owner to receive the rent",
+    "verdict": "BLOCKED",
+    "note": "rejected: ConstraintAddress",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.8",
+    "title": "control: a stranger cleans up correctly — the rent goes back to the owner (2 snapshots) and the creator (proposal); the stranger only pays the fees",
+    "verdict": "OK",
+    "note": "snapshots closed=true, proposal closed=true; owner +0.002923 SOL, creator +0.003348 SOL, stranger -0.000015 SOL",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.9",
+    "title": "a closed proposal cannot be executed again",
+    "verdict": "BLOCKED",
+    "note": "rejected: AccountNotInitialized",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.10",
+    "title": "control: the first finance minister claims today's salary",
+    "verdict": "OK",
+    "note": "",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.11",
+    "title": "the NEW finance minister claims a salary within 24 h of the previous minister's claim for the same role (finding 16 of the v4 report: a second salary for the same day)",
+    "verdict": "BLOCKED",
+    "note": "refused: PayrollTooSoon",
+    "status": "FIXED"
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.12",
+    "title": "a finance minister claims with the CULTURE role byte (2) to get a second payout",
+    "verdict": "BLOCKED",
+    "note": "rejected: NotEligibleForPayroll",
+    "status": ""
+  },
+  {
+    "group": "A9 v4.1 clean-up + payroll",
+    "id": "A9.13",
+    "title": "the REPLACED minister (F1) still tries to claim the finance salary",
+    "verdict": "BLOCKED",
+    "note": "rejected: NotEligibleForPayroll",
+    "status": ""
+  }
+]

@@ -1,6 +1,8 @@
 // A3 — milestone payouts are real money, so they are the juiciest target for holders / traders.
+// v4.1: the owner posts the weights of ONE scan (weight ≤ the holder's balance right now; Σ weights ≤ supply is checked when
+// the milestone is finalized).  Hopping is closed; "buy → snapshot → sell → collect" is left as it is (decision 2026-09-30).
 //   ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node audit/a3_milestones.ts
-import { makeWorld, group, record, COIN, SOL, finish } from "./lib";
+import { makeWorld, group, recordFixed, recordKnown, attempt, COIN, SOL, finish } from "./lib";
 
 const coins = (n: bigint) => n / COIN;
 const sol = (l: bigint) => (Number(l) / 1e9).toFixed(4);
@@ -13,34 +15,34 @@ async function main() {
   await w.withPool(300_000_000n, 30n * SOL);
 
   // ------------------------------------------------------------------------------------------------
-  // A3.1 wallet hopping: the same coins earn a payout share in every wallet the owner snapshots
+  // A3.1 wallet hopping: in v4 the same coins earned a payout share in every wallet the owner snapshotted
   // ------------------------------------------------------------------------------------------------
   const A2 = await w.holder(0n, 5);
   const A3 = await w.holder(0n, 5); // ends up holding A's 200M after A3.1
   {
     await w.fundMilestoneDirect(10n * SOL); // → payout pool = 30% = 3 SOL
     const ms = await w.createMilestone();
-    await w.msSnap(ms.n, ms.m, A.publicKey); // 200M
+    const scanW = await Promise.all([A, A2, A3, B].map((k) => w.bal(w.ata(k.publicKey)))); // ONE scan: 200M, 0, 0, 60M
+    await w.msSnap(ms.n, ms.m, A.publicKey, undefined, scanW[0]); // 200M
     await w.transferCoins(A, A2.publicKey, 200_000_000n); // slipped in between two owner transactions
-    await w.msSnap(ms.n, ms.m, A2.publicKey); // 200M again
+    const r2 = await attempt(() => w.msSnap(ms.n, ms.m, A2.publicKey, undefined, scanW[1])); // the scan saw 0 here
     await w.transferCoins(A2, A3.publicKey, 200_000_000n);
-    await w.msSnap(ms.n, ms.m, A3.publicKey); // and again
-    await w.msSnap(ms.n, ms.m, B.publicKey); // 60M, honest
+    const r3 = await attempt(() => w.msSnap(ms.n, ms.m, A3.publicKey, undefined, scanW[2]));
+    await w.msSnap(ms.n, ms.m, B.publicKey, undefined, scanW[3]); // 60M, honest
     await w.msFinalize(ms.n, ms.m);
     const rec = await w.program.account.milestoneRecord.fetch(ms.m);
     const pool = (BigInt((rec.fundSnapshotAmount).toString()) * BigInt(rec.payoutBps.toString())) / 10_000n;
-    const before = await Promise.all([A, A2, A3, B].map((k) => w.tbal(w.tAta(k.publicKey))));
-    for (const k of [A, A2, A3, B]) await w.msClaim(ms.n, ms.m, k.publicKey);
-    const after = await Promise.all([A, A2, A3, B].map((k) => w.tbal(w.tAta(k.publicKey))));
+    const before = await Promise.all([A, B].map((k) => w.tbal(w.tAta(k.publicKey))));
+    for (const k of [A, B]) await w.msClaim(ms.n, ms.m, k.publicKey);
+    const after = await Promise.all([A, B].map((k) => w.tbal(w.tAta(k.publicKey))));
     const got = after.map((x, i) => x - before[i]);
-    const attacker = got[0] + got[1] + got[2];
     const fairA = (pool * 200n) / 260n; // A really owns 200M, B 60M
     const fairB = pool - fairA;
-    record(
+    recordFixed(
       "A3.1",
-      "wallet hopping: 200M real coins snapshotted in 3 wallets → payout pool split by weight",
-      attacker > fairA ? "EXPLOITABLE" : "BLOCKED",
-      `payout pool ${sol(pool)} SOL; attacker got ${sol(attacker)} SOL (fair share ${sol(fairA)}), honest B got ${sol(got[3])} SOL (fair ${sol(fairB)}) → B is short by ${((1 - Number(got[3]) / Number(fairB)) * 100).toFixed(0)}%. total_eligible_weight=${coins(BigInt(rec.totalEligibleWeight.toString())) / 1_000_000n}M vs real holdings of the three actors 260M`
+      "wallet hopping: 200M real coins moved between wallets while the owner posts the weights of ONE scan → payout pool split by weight",
+      got[0] > fairA + 10n,
+      `payout pool ${sol(pool)} SOL; attacker got ${sol(got[0])} SOL (fair share ${sol(fairA)}), honest B got ${sol(got[1])} SOL (fair ${sol(fairB)}). total_eligible_weight=${coins(BigInt(rec.totalEligibleWeight.toString())) / 1_000_000n}M = the real holdings 260M; weight 0 for the hop wallets → NoWeight (${/NoWeight/.test(r2.err)}/${/NoWeight/.test(r3.err)}). (An owner posting LIVE balances one by one would still be fooled, as in A2.1r)`
     );
   }
 
@@ -50,7 +52,6 @@ async function main() {
   {
     const X = await w.holder(0n, 500);
     const results: string[] = [];
-    let prev: any = w.milestonePda(1); // milestone 1 was used by A3.1
     let profitableAtBig = false, lostAtSmall = false;
     for (const [label, targetBase] of [["small fund", 5n * SOL], ["medium fund", 15n * SOL], ["big fund", 100n * SOL]] as [string, bigint][]) {
       const fundBal = await w.tbal(w.milestoneFundPda);
@@ -75,10 +76,11 @@ async function main() {
       if (label === "big fund" && net > 0n) profitableAtBig = true;
       if (label === "small fund" && net < 0n) lostAtSmall = true;
     }
-    record(
+    recordKnown(
       "A3.2",
       "flash holder: buy 6% of supply → owner snapshots → sell → collect the milestone share",
-      profitableAtBig ? "EXPLOITABLE" : "BLOCKED",
+      profitableAtBig,
+      "ACCEPTED",
       `${results.join(" | ")}. Round trip (two 5% fees + slippage) costs ≈0.78 SOL here; rule of thumb: profitable when the milestone fund > about 1/3 of the market value of all eligible holdings. Loses at the small fund=${lostAtSmall}`
     );
   }

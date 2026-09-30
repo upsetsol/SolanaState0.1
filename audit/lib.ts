@@ -2,8 +2,9 @@
 //
 // It builds a throw-away "world" (fresh governance mint, a state initialised on the real program binary,
 // holders, optionally a real Meteora DAMM v2 pool) and gives every scenario the same helpers, so each attack
-// runs against the actual bytecode that is deployed (target/deploy/onchain_state_solana.so, sha256 5e138c88…,
-// byte-identical to the mainnet program).  Nothing here changes the contract.
+// runs against the actual bytecode (target/deploy/onchain_state_solana.so = the v4.1 build).  Nothing here changes
+// the contract.  The FIRST run of these tests (2026-09-30, v4 = the binary that is on mainnet "Test 1",
+// sha256 5e138c88…7237) is kept in audit/results_v4/.
 //
 // Verdicts:
 //   BLOCKED      the attack was rejected by the contract  (good)
@@ -11,6 +12,11 @@
 //   OK           a positive control / the legit path worked
 //   INFO         a measurement
 //   ERROR        the harness itself failed - must be looked at by a human
+// Status = what was decided about a finding (Roman / Nikita, 2026-09-30):
+//   FIXED     it worked against v4 and the v4.1 change stops it (verdict BLOCKED)
+//   ACCEPTED  it still works and the owner decided to leave it as it is
+//   PENDING   it still works and the decision is not taken yet (launch procedure / Nikita)
+// An EXPLOITABLE row WITHOUT a status is unexpected (a regression or an undecided finding) and is listed separately.
 
 import {
   Connection, Keypair, PublicKey, SystemProgram, SYSVAR_CLOCK_PUBKEY, Transaction, LAMPORTS_PER_SOL,
@@ -62,6 +68,18 @@ export function record(id: string, title: string, verdict: Verdict, note?: strin
 export function errText(e: any): string {
   const parts = [e?.error?.errorCode?.code, e?.error?.errorMessage, e?.message, ...(e?.logs ?? []), ...(e?.transactionLogs ?? [])];
   return parts.filter(Boolean).join(" | ");
+}
+/** An attack that a v4.1 change is meant to stop.  worked=false => BLOCKED {FIXED}; worked=true => EXPLOITABLE with NO status (a regression). */
+export function recordFixed(id: string, title: string, worked: boolean, note?: string) {
+  record(id, title, worked ? "EXPLOITABLE" : "BLOCKED", note, worked ? "" : "FIXED");
+}
+/** An attack that is known to work and was consciously left (ACCEPTED) or is still undecided (PENDING).  worked=false => BLOCKED (unexpected, no status). */
+export function recordKnown(id: string, title: string, worked: boolean, status: "ACCEPTED" | "PENDING", note?: string) {
+  record(id, title, worked ? "EXPLOITABLE" : "BLOCKED", note, worked ? status : "");
+}
+/** Run a call that may fail; never throws. */
+export async function attempt(fn: () => Promise<any>): Promise<{ ok: boolean; err: string }> {
+  try { await fn(); return { ok: true, err: "" }; } catch (e: any) { return { ok: false, err: errText(e) }; }
 }
 /** The attack SHOULD fail. Fails with one of `codes` => BLOCKED; succeeds => EXPLOITABLE; other error => ERROR. */
 export async function expectBlocked(id: string, title: string, codes: string | string[], fn: () => Promise<any>, exploitNote?: string) {
@@ -418,7 +436,10 @@ export function finish(file: string) {
   for (const r of rows) c[r.verdict] = (c[r.verdict] ?? 0) + 1;
   console.log("\n================ SUMMARY ================");
   console.log(c);
-  for (const r of rows.filter((x) => x.verdict === "EXPLOITABLE")) console.log(`  ⚠️  [${r.id}] ${r.title} — ${r.note ?? ""}${r.status ? "  {" + r.status + "}" : ""}`);
+  const s: Record<string, number> = {};
+  for (const r of rows) if (r.status) s[r.status] = (s[r.status] ?? 0) + 1;
+  console.log("by status:", s);
+  for (const r of rows.filter((x) => x.verdict === "EXPLOITABLE")) console.log(`  ⚠️  [${r.id}] ${r.title} — ${r.note ?? ""}${r.status ? "  {" + r.status + "}" : "  {NO STATUS — unexpected}"}`);
   for (const r of rows.filter((x) => x.verdict === "ERROR")) console.log(`  ❌ [${r.id}] ${r.title} — ${r.note ?? ""}`);
   fs.writeFileSync(file, JSON.stringify(rows, null, 2));
   console.log("results →", file);

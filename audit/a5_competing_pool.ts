@@ -5,7 +5,7 @@
 //   ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node audit/a5_competing_pool.ts
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { CpAmm, CollectFeeMode, MIN_SQRT_PRICE, MAX_SQRT_PRICE, derivePoolAddress } from "@meteora-ag/cp-amm-sdk";
-import { makeWorld, group, record, sendSigned, progFor, conn, BN, NATIVE_MINT, TP, TPT, COIN, SOL, finish, errText } from "./lib";
+import { makeWorld, group, record, recordKnown, sendSigned, progFor, BN, NATIVE_MINT, TP, TPT, COIN, SOL, finish, errText } from "./lib";
 
 const PUBLIC_CONFIG_ONLYB_25BPS = new PublicKey("82p7sVzQWZfCrmStPhsG8BYKwheQkUiXSs2wiqdhwNxr");
 
@@ -33,7 +33,7 @@ async function main() {
     await sendSigned(tx, [C, nft]);
     created = true;
   } catch (e) { err = errText(e).slice(0, 300); }
-  record("A5.1", "an ordinary holder (no keys of ours) opens a SECOND pool for the same pair from a public Meteora config with a 0.25% fee", created ? "EXPLOITABLE" : "BLOCKED", created ? `rival pool ${rivalPool.toBase58()} exists next to ours ${w.poolAddr.toBase58()}` : err);
+  recordKnown("A5.1", "an ordinary holder (no keys of ours) opens a SECOND pool for the same pair from a public Meteora config with a 0.25% fee", created, "PENDING", created ? `rival pool ${rivalPool.toBase58()} exists next to ours ${w.poolAddr.toBase58()} (an AMM property; Nikita decides whether to accept it or return to a coin-level fee)` : err);
   if (!created) { finish("audit/results_a5.json"); return; }
 
   // ---- what does a trader get for the same 1 SOL in each pool?
@@ -45,7 +45,7 @@ async function main() {
   await w.swap(T, "buy", SOL, rivalPool);
   const rival = (await coinsOf(T.publicKey)) - c1;
   const better = (Number(rival) / Number(ours) - 1) * 100;
-  record("A5.2", "same trader, same 1 SOL buy: coins received in OUR 5% pool vs the rival 0.25% pool", rival > ours ? "EXPLOITABLE" : "BLOCKED",
+  recordKnown("A5.2", "same trader, same 1 SOL buy: coins received in OUR 5% pool vs the rival 0.25% pool", rival > ours, "PENDING",
     `ours ${(Number(ours) / 1e9 / 1e6).toFixed(3)}M coins vs rival ${(Number(rival) / 1e9 / 1e6).toFixed(3)}M coins → the rival pool gives ${better.toFixed(2)}% more, so any price-comparing router/aggregator sends the flow there`);
 
   // ---- what reaches the treasury?
@@ -59,8 +59,11 @@ async function main() {
   for (let i = 0; i < 5; i++) { await w.swap(T, "buy", SOL / 2n, w.poolAddr); }
   await claim();
   const t2 = await w.tbal(w.treasury);
-  record("A5.3", "treasury income from 2.5 SOL of volume through the RIVAL pool vs through OUR pool", t1 - t0 === 0n && t2 - c2 > 0n ? "EXPLOITABLE" : "INFO",
-    `via rival: +${(Number(t1 - t0) / 1e9).toFixed(4)} SOL to the treasury; via ours: +${(Number(t2 - c2) / 1e9).toFixed(4)} SOL (=${((Number(t2 - c2) / 2.5e9) * 100).toFixed(2)}% of the volume)`);
+  const rivalEarnsNothing = t1 - t0 === 0n && t2 - c2 > 0n;
+  const note53 = `via rival: +${(Number(t1 - t0) / 1e9).toFixed(4)} SOL to the treasury; via ours: +${(Number(t2 - c2) / 1e9).toFixed(4)} SOL (=${((Number(t2 - c2) / 2.5e9) * 100).toFixed(2)}% of the volume)`;
+  const title53 = "treasury income from 2.5 SOL of volume through the RIVAL pool vs through OUR pool";
+  if (rivalEarnsNothing) recordKnown("A5.3", title53, true, "PENDING", note53);
+  else record("A5.3", title53, "INFO", note53);
 
   finish("audit/results_a5.json");
 }

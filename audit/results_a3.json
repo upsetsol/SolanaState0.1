@@ -2,15 +2,17 @@
   {
     "group": "A3 milestones",
     "id": "A3.1",
-    "title": "wallet hopping: 200M real coins snapshotted in 3 wallets → payout pool split by weight",
-    "verdict": "EXPLOITABLE",
-    "note": "payout pool 3.0000 SOL; attacker got 2.7273 SOL (fair share 2.3077), honest B got 0.2727 SOL (fair 0.6923) → B is short by 61%. total_eligible_weight=660M vs real holdings of the three actors 260M"
+    "title": "wallet hopping: 200M real coins moved between wallets while the owner posts the weights of ONE scan → payout pool split by weight",
+    "verdict": "BLOCKED",
+    "note": "payout pool 3.0000 SOL; attacker got 2.3077 SOL (fair share 2.3077), honest B got 0.6923 SOL (fair 0.6923). total_eligible_weight=260M = the real holdings 260M; weight 0 for the hop wallets → NoWeight (true/true). (An owner posting LIVE balances one by one would still be fooled, as in A2.1r)",
+    "status": "FIXED"
   },
   {
     "group": "A3 milestones",
     "id": "A3.2",
     "title": "flash holder: buy 6% of supply → owner snapshots → sell → collect the milestone share",
     "verdict": "EXPLOITABLE",
-    "note": "small fund: payout pool 2.4500 SOL → X net -0.3146 SOL | medium fund: payout pool 6.0000 SOL → X net +0.3567 SOL | big fund: payout pool 45.0000 SOL → X net +7.7323 SOL. Round trip (two 5% fees + slippage) costs ≈0.78 SOL here; rule of thumb: profitable when the milestone fund > about 1/3 of the market value of all eligible holdings. Loses at the small fund=true"
+    "note": "small fund: payout pool 2.4500 SOL → X net -0.3146 SOL | medium fund: payout pool 6.0000 SOL → X net +0.3567 SOL | big fund: payout pool 45.0000 SOL → X net +7.7323 SOL. Round trip (two 5% fees + slippage) costs ≈0.78 SOL here; rule of thumb: profitable when the milestone fund > about 1/3 of the market value of all eligible holdings. Loses at the small fund=true",
+    "status": "ACCEPTED"
   }
 ]

@@ -2,15 +2,25 @@
   {
     "group": "A2b hopping at scale",
     "id": "A2b.1",
-    "title": "a 4.2% holder (42M coins) uses 10 wallets: his coins are counted 10×",
-    "verdict": "EXPLOITABLE",
-    "note": "counted for=420M (real stack 42M) vs against=210M (honest opposition 210M) → passes; finance_daily_bps is now 60 (was 50). "
+    "title": "a 4.2% holder (42M coins) uses 10 wallets, the owner posts the weights of ONE scan: his coins are counted once",
+    "verdict": "BLOCKED",
+    "note": "counted for=42M (real stack 42M) vs against=210M (honest opposition 210M) → rejected; the owner's attempts to enrol the 9 hop wallets were refused with NoWeight: 9/9; finance_daily_bps is 50 (was 50)",
+    "status": "FIXED"
   },
   {
     "group": "A2b hopping at scale",
     "id": "A2b.2",
-    "title": "cost of the multiplier: SOL spent by the ten wallets (token-account rent is paid by the deployer in this harness; the rest is fees)",
+    "title": "RESIDUAL: the owner posts LIVE balances one by one → the same 42M coins are counted 10×",
+    "verdict": "EXPLOITABLE",
+    "note": "counted for=420M (real stack 42M) vs against=210M → passes; finance_daily_bps is now 70 (was 50). The open_voting sum check (Σ weights ≤ supply) only caps the multiplier at supply / stack (≈ 23× for 4.2%)",
+    "status": "ACCEPTED"
+  },
+  {
+    "group": "A2b hopping at scale",
+    "id": "A2b.3",
+    "title": "cost of the multiplier (both rounds): SOL spent by the ten wallets (token-account rent is paid by the deployer in this harness; the rest is fees)",
     "verdict": "INFO",
-    "note": "≈0.00010 SOL in transaction fees; plus ≈0.002 SOL rent per extra token account (9 more) → well under 0.05 SOL in total. The counter (u64) only overflows after ≈18× total supply"
+    "note": "≈0.00015 SOL in transaction fees; plus ≈0.002 SOL rent per extra token account (9 more) → well under 0.05 SOL in total. The counter (u64) only overflows after ≈18× total supply",
+    "status": ""
   }
 ]

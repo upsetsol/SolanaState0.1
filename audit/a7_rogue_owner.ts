@@ -1,7 +1,7 @@
 // A7 — blast radius of a stolen / dishonest OWNER key (owners_authority) WITHOUT any vote.
 // The owner alone decides who is snapshotted for a milestone, and a milestone pays 30%→50% of the fund's free balance.
 //   ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node audit/a7_rogue_owner.ts
-import { makeWorld, group, record, COIN, SOL, finish } from "./lib";
+import { makeWorld, group, recordKnown, SOL, finish } from "./lib";
 
 async function main() {
   group("A7 rogue owner");
@@ -24,10 +24,11 @@ async function main() {
   }
   const mine1 = await w.tbal(w.tAta(w.me));
   const left = await w.tbal(w.milestoneFundPda);
-  record(
+  recordKnown(
     "A7.1",
     "owner key alone empties the citizens' milestone fund into his own wallet: snapshot only himself, finalize, claim — five times in a row, no vote, no timelock",
-    mine1 - mine0 > (fund0 * 9n) / 10n ? "EXPLOITABLE" : "BLOCKED",
+    mine1 - mine0 > (fund0 * 9n) / 10n,
+    "ACCEPTED",
     `${steps.join(" | ")} → owner took ${(Number(mine1 - mine0) / 1e9).toFixed(3)} of ${(Number(fund0) / 1e9).toFixed(0)} SOL (${(Number(mine1 - mine0) * 100 / Number(fund0)).toFixed(1)}%), the honest 6% holder got 0`
   );
   // ---- A7.2: the owner is also the only one who decides WHO votes. Holding more than the quorum himself (a founder
@@ -41,16 +42,18 @@ async function main() {
       const amount = (cur * 29n) / 100n; // just under the 30% cap
       const p = await w.propose(0, w.me, amount, 0, `owner pays himself #${i}`);
       await w.snapshot(p.id, p.pPda, w.me); // the honest 6% holder is simply never enrolled
+      await w.openVoting(p.id);
       await w.vote(w.payer, p.id, p.pPda, true);
       await w.waitExecutable(p.pPda);
       await w.execute(p.id, { recipient: w.tAta(w.me) });
       rounds.push(`#${i} took ${(Number(amount) / 1e9).toFixed(3)} SOL`);
     }
     const t1 = await w.tbal(w.treasury);
-    record(
+    recordKnown(
       "A7.2",
       "owner enrols only himself (he holds 94% of the coins) and votes SPEND-to-himself three times in a row",
-      t1 < (t0 * 40n) / 100n ? "EXPLOITABLE" : "BLOCKED",
+      t1 < (t0 * 40n) / 100n,
+      "ACCEPTED",
       `${rounds.join(" | ")} → treasury ${(Number(t0) / 1e9).toFixed(2)} → ${(Number(t1) / 1e9).toFixed(2)} SOL (${(Number(t1) * 100 / Number(t0)).toFixed(0)}% left, 0.71^n); each round needs only vote+timelock, nobody else could vote`
     );
   }

@@ -1,0 +1,16 @@
+[
+  {
+    "group": "A2c quorum moved by add/remove liquidity (no trading fee)",
+    "id": "A2c.1",
+    "title": "a stranger ADDS 3M coins of liquidity to our pool (no swap, no 5% fee) → the voting base shrinks → a proposal that was short of quorum passes",
+    "verdict": "EXPLOITABLE",
+    "note": "short of quorum before=true; base 700000000 → 697000000 coins; quorum met after=true; executed=true. The stranger only moved 3000000 coins into a position he can withdraw"
+  },
+  {
+    "group": "A2c quorum moved by add/remove liquidity (no trading fee)",
+    "id": "A2c.2",
+    "title": "…and the stranger withdraws it again: what did the whole round trip cost him?",
+    "verdict": "INFO",
+    "note": "base back to 699999999 coins; coins returned 2999999M-units of 3000000; SOL change -0.00787 (rent of the position + transaction fees only, no trading fee)"
+  }
+]

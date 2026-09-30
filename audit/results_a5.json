@@ -4,20 +4,23 @@
     "id": "A5.1",
     "title": "an ordinary holder (no keys of ours) opens a SECOND pool for the same pair from a public Meteora config with a 0.25% fee",
     "verdict": "EXPLOITABLE",
-    "note": "rival pool DrzPq9NQa2HtJ8G6B9qGMAQVSvfMKzG9hJdudqBWcx6v exists next to ours Ej98BBs2L8KxQ1adkkfuma6eZatLFR4K6AvGku3QFyGX"
+    "note": "rival pool 7UVaMpaPbmPadc8bSJLchHbZmW5CZNZw1wt5S4TFNjhV exists next to ours 95pCW4SqsqJVngdWLBgbP3v1SyBuMXBSFCoDJ9wvhXEq (an AMM property; Nikita decides whether to accept it or return to a coin-level fee)",
+    "status": "PENDING"
   },
   {
     "group": "A5 competing (cheaper) pool for the same pair",
     "id": "A5.2",
     "title": "same trader, same 1 SOL buy: coins received in OUR 5% pool vs the rival 0.25% pool",
     "verdict": "EXPLOITABLE",
-    "note": "ours 9.208M coins vs rival 9.654M coins → the rival pool gives 4.84% more, so any price-comparing router/aggregator sends the flow there"
+    "note": "ours 9.208M coins vs rival 9.654M coins → the rival pool gives 4.84% more, so any price-comparing router/aggregator sends the flow there",
+    "status": "PENDING"
   },
   {
     "group": "A5 competing (cheaper) pool for the same pair",
     "id": "A5.3",
     "title": "treasury income from 2.5 SOL of volume through the RIVAL pool vs through OUR pool",
     "verdict": "EXPLOITABLE",
-    "note": "via rival: +0.0000 SOL to the treasury; via ours: +0.1000 SOL (=4.00% of the volume)"
+    "note": "via rival: +0.0000 SOL to the treasury; via ours: +0.1000 SOL (=4.00% of the volume)",
+    "status": "PENDING"
   }
 ]

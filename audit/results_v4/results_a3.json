@@ -1,0 +1,16 @@
+[
+  {
+    "group": "A3 milestones",
+    "id": "A3.1",
+    "title": "wallet hopping: 200M real coins snapshotted in 3 wallets → payout pool split by weight",
+    "verdict": "EXPLOITABLE",
+    "note": "payout pool 3.0000 SOL; attacker got 2.7273 SOL (fair share 2.3077), honest B got 0.2727 SOL (fair 0.6923) → B is short by 61%. total_eligible_weight=660M vs real holdings of the three actors 260M"
+  },
+  {
+    "group": "A3 milestones",
+    "id": "A3.2",
+    "title": "flash holder: buy 6% of supply → owner snapshots → sell → collect the milestone share",
+    "verdict": "EXPLOITABLE",
+    "note": "small fund: payout pool 2.4500 SOL → X net -0.3146 SOL | medium fund: payout pool 6.0000 SOL → X net +0.3567 SOL | big fund: payout pool 45.0000 SOL → X net +7.7323 SOL. Round trip (two 5% fees + slippage) costs ≈0.78 SOL here; rule of thumb: profitable when the milestone fund > about 1/3 of the market value of all eligible holdings. Loses at the small fund=true"
+  }
+]

@@ -1,0 +1,44 @@
+[
+  {
+    "group": "A4 initialize / register_pool trust",
+    "id": "A4.1",
+    "title": "a stranger initialises a state on the VICTIM's mint before the victim does (he never signed anything, isn't the mint authority)",
+    "verdict": "EXPLOITABLE",
+    "note": "attacker is now owners_authority/admin/president of the state tied to the victim's coin"
+  },
+  {
+    "group": "A4 initialize / register_pool trust",
+    "id": "A4.2",
+    "title": "…and `initialize` accepted degenerate parameters without any bounds check",
+    "verdict": "EXPLOITABLE",
+    "note": "voting period 1s, timelock 0s, quorums 0/0/0 bps, proposal threshold 0 bps, president payroll 10000 bps/day (=100% per day), finance limit 10000 bps/day"
+  },
+  {
+    "group": "A4 initialize / register_pool trust",
+    "id": "A4.3",
+    "title": "the real owner then tries to initialise his own coin",
+    "verdict": "EXPLOITABLE",
+    "note": "FAILS (the Config PDA for that mint is taken forever) → the coin can never get a legitimate state; a new mint is needed"
+  },
+  {
+    "group": "A4 initialize / register_pool trust",
+    "id": "A4.4",
+    "title": "griefing: attacker pre-creates the future treasury account (a 0.002 SOL ATA) → the owner's initialize fails",
+    "verdict": "EXPLOITABLE",
+    "note": "initialize FAILED for the real owner (the associated-token program refuses to re-create the existing account: \"Provided owner is not allowed\")"
+  },
+  {
+    "group": "A4 initialize / register_pool trust",
+    "id": "A4.5",
+    "title": "governance mint with a hidden PermanentDelegate (can move/burn ANY holder's coins, incl. the pool vault) is accepted by initialize",
+    "verdict": "EXPLOITABLE",
+    "note": "no check of mint extensions / authorities: users must verify the mint themselves"
+  },
+  {
+    "group": "A4 initialize / register_pool trust",
+    "id": "A4.6",
+    "title": "owner registers a pool with a 0.25% fee (instead of 5%): register_pool only checks pair + 'fee only in B', not the fee level",
+    "verdict": "EXPLOITABLE",
+    "note": "accepted — 'constant 5%' is a launch-procedure promise, not something the contract enforces (the fee schedule/level is not read)"
+  }
+]

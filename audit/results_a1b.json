@@ -4,41 +4,47 @@
     "id": "A1b.1",
     "title": "claim_milestone (anyone can call it) with a fake program in the token_program slot",
     "verdict": "BLOCKED",
-    "note": "rejected: InvalidProgramId"
+    "note": "rejected: InvalidProgramId",
+    "status": ""
   },
   {
     "group": "A1b arbitrary CPI / fake programs",
     "id": "A1b.2",
     "title": "claim_salary with a fake token program",
     "verdict": "BLOCKED",
-    "note": "rejected: InvalidProgramId"
+    "note": "rejected: InvalidProgramId",
+    "status": ""
   },
   {
     "group": "A1b arbitrary CPI / fake programs",
     "id": "A1b.3",
     "title": "minister_spend with a fake token program",
     "verdict": "BLOCKED",
-    "note": "rejected: InvalidProgramId"
+    "note": "rejected: InvalidProgramId",
+    "status": ""
   },
   {
     "group": "A1b arbitrary CPI / fake programs",
     "id": "A1b.4",
     "title": "claim_pool_fees with a fake program as token_b_program",
     "verdict": "BLOCKED",
-    "note": "rejected: InvalidProgramId"
+    "note": "rejected: InvalidProgramId",
+    "status": ""
   },
   {
     "group": "A1b arbitrary CPI / fake programs",
     "id": "A1b.5",
     "title": "claim_pool_fees with a fake program as token_a_program",
     "verdict": "BLOCKED",
-    "note": "rejected: InvalidProgramId"
+    "note": "rejected: InvalidProgramId",
+    "status": ""
   },
   {
     "group": "A1b arbitrary CPI / fake programs",
     "id": "A1b.6",
     "title": "claim_pool_fees with the WRONG token program (Token-2022 for the wSOL side)",
     "verdict": "BLOCKED",
-    "note": "rejected: ConstraintTokenTokenProgram"
+    "note": "rejected: ConstraintTokenTokenProgram",
+    "status": ""
   }
 ]

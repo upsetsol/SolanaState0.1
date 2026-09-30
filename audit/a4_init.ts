@@ -5,7 +5,7 @@ import {
   ExtensionType, createInitializePermanentDelegateInstruction, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import {
-  group, record, expectBlocked, newFunded, createGovMint, configPdaOf, progFor, anchor, NATIVE_MINT, TP, TPT, ATAP, initArgs, DEFAULT_PARAMS,
+  group, record, recordKnown, newFunded, createGovMint, configPdaOf, progFor, NATIVE_MINT, TP, TPT, ATAP, initArgs, DEFAULT_PARAMS,
   sendSigned, finish, errText, makeWorld, SOL,
 } from "./lib";
 
@@ -28,17 +28,18 @@ async function main() {
       await progFor(attacker).methods.initialize(...initArgs(attacker.publicKey, attacker.publicKey, attacker.publicKey, hostile)).accounts(initAccts(attacker.publicKey, mint.publicKey)).rpc();
       squatted = true;
     } catch (e) { err = errText(e).slice(0, 200); }
-    record("A4.1", "a stranger initialises a state on the VICTIM's mint before the victim does (he never signed anything, isn't the mint authority)", squatted ? "EXPLOITABLE" : "BLOCKED", squatted ? "attacker is now owners_authority/admin/president of the state tied to the victim's coin" : err);
+    recordKnown("A4.1", "a stranger initialises a state on the VICTIM's mint before the victim does (he never signed anything, isn't the mint authority)", squatted, "ACCEPTED", squatted ? "attacker is now owners_authority/admin/president of the state tied to the victim's coin (decision 2026-09-30: `initialize` stays open)" : err);
     if (squatted) {
       const cfg: any = await progFor(attacker).account.config.fetch(configPdaOf(mint.publicKey));
-      record("A4.2", "…and `initialize` accepted degenerate parameters without any bounds check", "EXPLOITABLE",
+      recordKnown("A4.2", "…and `initialize` accepted degenerate parameters without any bounds check", true, "ACCEPTED",
         `voting period ${cfg.votingPeriodSecs}s, timelock ${cfg.timelockSecs}s, quorums ${cfg.quorumSpendBps}/${cfg.quorumRoleBps}/${cfg.quorumParamBps} bps, proposal threshold ${cfg.proposalThresholdBps} bps, president payroll ${cfg.payrollPresidentBps} bps/day (=${Number(cfg.payrollPresidentBps) / 100}% per day), finance limit ${cfg.financeDailyBps} bps/day`);
       let victimOk = false, verr = "";
       try {
         await progFor(victim).methods.initialize(...initArgs(victim.publicKey, victim.publicKey, victim.publicKey, DEFAULT_PARAMS)).accounts(initAccts(victim.publicKey, mint.publicKey)).rpc();
         victimOk = true;
       } catch (e) { verr = errText(e).slice(0, 120); }
-      record("A4.3", "the real owner then tries to initialise his own coin", victimOk ? "OK" : "EXPLOITABLE", victimOk ? "worked" : "FAILS (the Config PDA for that mint is taken forever) → the coin can never get a legitimate state; a new mint is needed");
+      if (victimOk) record("A4.3", "the real owner then tries to initialise his own coin", "OK", "worked");
+      else recordKnown("A4.3", "the real owner then tries to initialise his own coin", true, "ACCEPTED", "FAILS (the Config PDA for that mint is taken forever) → the coin can never get a legitimate state; a new mint is needed");
     }
   }
 
@@ -56,7 +57,7 @@ async function main() {
       await progFor(victim).methods.initialize(...initArgs(victim.publicKey, victim.publicKey, victim.publicKey, DEFAULT_PARAMS)).accounts(initAccts(victim.publicKey, mint.publicKey)).rpc();
       ok = true;
     } catch (e) { err = errText(e); }
-    record("A4.4", "griefing: attacker pre-creates the future treasury account (a 0.002 SOL ATA) → the owner's initialize fails", ok ? "BLOCKED" : "EXPLOITABLE", ok ? "initialize still worked" : "initialize FAILED for the real owner (the associated-token program refuses to re-create the existing account: \"Provided owner is not allowed\")");
+    recordKnown("A4.4", "griefing: attacker pre-creates the future treasury account (a 0.002 SOL ATA) → the owner's initialize fails", !ok, "ACCEPTED", ok ? "initialize still worked" : "initialize FAILED for the real owner (the associated-token program refuses to re-create the existing account: \"Provided owner is not allowed\")");
   }
 
   // ---- A4.5  a Token-2022 governance mint with a PERMANENT DELEGATE is accepted
@@ -72,7 +73,7 @@ async function main() {
       await progFor(dev).methods.initialize(...initArgs(dev.publicKey, dev.publicKey, dev.publicKey, DEFAULT_PARAMS)).accounts(initAccts(dev.publicKey, mint.publicKey)).rpc();
       ok = true;
     } catch (e) { err = errText(e).slice(0, 160); }
-    record("A4.5", "governance mint with a hidden PermanentDelegate (can move/burn ANY holder's coins, incl. the pool vault) is accepted by initialize", ok ? "EXPLOITABLE" : "BLOCKED", ok ? "no check of mint extensions / authorities: users must verify the mint themselves" : err);
+    recordKnown("A4.5", "governance mint with a hidden PermanentDelegate (can move/burn ANY holder's coins, incl. the pool vault) is accepted by initialize", ok, "ACCEPTED", ok ? "no check of mint extensions / authorities: users must verify the mint themselves" : err);
   }
 
   // ---- A4.6  register a pool whose fee is NOT 5% (0.25%): only the fee MODE is checked, not the fee level
@@ -80,7 +81,7 @@ async function main() {
     const w = await makeWorld({ name: "a4-fee", params: {} });
     let ok = false, err = "";
     try { await w.withPool(300_000_000n, 30n * SOL, 25); ok = true; } catch (e) { err = errText(e).slice(0, 160); }
-    record("A4.6", "owner registers a pool with a 0.25% fee (instead of 5%): register_pool only checks pair + 'fee only in B', not the fee level", ok ? "EXPLOITABLE" : "BLOCKED", ok ? "accepted — 'constant 5%' is a launch-procedure promise, not something the contract enforces (the fee schedule/level is not read)" : err);
+    recordKnown("A4.6", "owner registers a pool with a 0.25% fee (instead of 5%): register_pool only checks pair + 'fee only in B', not the fee level", ok, "ACCEPTED", ok ? "accepted — 'constant 5%' is a launch-procedure promise, not something the contract enforces (the fee schedule/level is not read; decision 2026-09-30: stays as it is)" : err);
   }
 
   finish("audit/results_a4.json");

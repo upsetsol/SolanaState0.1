@@ -1,9 +1,10 @@
-// A2c — the quorum base can also be moved WITHOUT trading: a stranger simply adds (or removes) his own liquidity in our
+// A2c — the quorum base could be moved WITHOUT trading in v4: a stranger simply adds (or removes) his own liquidity in our
 // pool. Coins that sit in the pool vault leave the voting base, and adding/removing liquidity charges no trading fee.
+// v4.1 freezes the base at open_voting, so a liquidity move AFTER the start of the voting no longer matters.
 //   ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npx ts-node audit/a2c_lp_quorum.ts
 import { Keypair } from "@solana/web3.js";
 import { CollectFeeMode } from "@meteora-ag/cp-amm-sdk";
-import { makeWorld, group, record, BN, TP, TPT, NATIVE_MINT, COIN, SOL, finish, errText, sendSigned } from "./lib";
+import { makeWorld, group, record, recordFixed, attempt, BN, TP, TPT, NATIVE_MINT, COIN, SOL, finish, sendSigned, errText } from "./lib";
 
 const coins = (n: bigint) => n / COIN;
 
@@ -21,10 +22,11 @@ async function main() {
   const S = await w.holder(10_000_000n, 100); // a stranger with some coins and SOL
   const p = await w.propose(0, w.me, 1000n, 0, "quorum-by-liquidity test");
   await w.snapshot(p.id, p.pPda, Dq.publicKey);
+  await w.openVoting(p.id); // the quorum base is frozen here
   await w.vote(Dq, p.id, p.pPda, true);
   await w.waitExecutable(p.pPda);
-  let shortBefore = false;
-  try { await w.execute(p.id, { recipient: w.tAta(w.me) }); } catch (e) { shortBefore = /QuorumNotReached/.test(errText(e)); }
+  const before = await attempt(() => w.execute(p.id, { recipient: w.tAta(w.me) }));
+  const shortBefore = !before.ok && /QuorumNotReached/.test(before.err);
 
   // the stranger becomes a liquidity provider of OUR pool with 3M coins (+ matching SOL)
   const cp = w.cpAmm;
@@ -46,15 +48,15 @@ async function main() {
   await sendSigned(tx, [S, nft]);
   const baseAfter = await baseNow();
   const votes = weight * COIN;
-  const metAfter = votes * 10_000n >= baseAfter * QBPS;
-  let passes = false;
-  try { await w.execute(p.id, { recipient: w.tAta(w.me) }); passes = true; } catch (e) { /* */ }
+  const metLive = votes * 10_000n >= baseAfter * QBPS; // what the pre-v4.1 rule (live base) would say now
+  const after = await attempt(() => w.execute(p.id, { recipient: w.tAta(w.me) }));
   const c1 = await w.bal(w.ata(S.publicKey));
-  record(
+  if (!shortBefore) record("A2c.1", "quorum by liquidity", "ERROR", "the control failed: the proposal was not short of quorum before the liquidity move: " + before.err.slice(0, 160));
+  else recordFixed(
     "A2c.1",
-    "a stranger ADDS 3M coins of liquidity to our pool (no swap, no 5% fee) → the voting base shrinks → a proposal that was short of quorum passes",
-    shortBefore && passes ? "EXPLOITABLE" : "BLOCKED",
-    `short of quorum before=${shortBefore}; base ${coins(base0)} → ${coins(baseAfter)} coins; quorum met after=${metAfter}; executed=${passes}. The stranger only moved ${coins(c0 - c1)} coins into a position he can withdraw`
+    "a stranger ADDS 3M coins of liquidity to our pool (no swap, no 5% fee) → the live base shrinks; the vote was 0.05M coins short of the quorum",
+    after.ok,
+    `short of quorum before=${shortBefore}; live base ${coins(base0)} → ${coins(baseAfter)} coins (the pre-v4.1 live rule WOULD now be met=${metLive}); with the base frozen at open_voting executed=${after.ok}${after.ok ? "" : " " + after.err.slice(0, 80)}. The stranger only moved ${coins(c0 - c1)} coins into a position he can withdraw`
   );
 
   // and he can take it back out the same way (removing liquidity is free as well)
