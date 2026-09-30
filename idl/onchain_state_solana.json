@@ -340,7 +340,10 @@
         "Claim salary for a role — once a day, a fixed % of the MORNING treasury",
         "snapshot (not the live balance). Does not use up minister_spend's",
         "daily/weekly limit — this is separate, guaranteed income for holding",
-        "the role."
+        "the role. The \"already paid today\" record is kept per ROLE (0=president,",
+        "1=finance, 2=culture), not per wallet: handing the role to a new wallet",
+        "does not give the role a second salary the same day. `role` must be the",
+        "caller's own role."
       ],
       "discriminator": [
         253,
@@ -387,31 +390,7 @@
         },
         {
           "name": "payroll_claim",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  121,
-                  114,
-                  111,
-                  108,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "config"
-              },
-              {
-                "kind": "account",
-                "path": "claimant"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "treasury",
@@ -429,7 +408,236 @@
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "role",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "close_proposal",
+      "docs": [
+        "Clean-up: closes a finished proposal and returns its rent to whoever created it.",
+        "Anyone may call it (the money can only go back to the creator). Allowed once the",
+        "proposal was executed or has expired; a proposal whose voting was never opened",
+        "can be closed after ABANDONED_PROPOSAL_SECS."
+      ],
+      "discriminator": [
+        213,
+        178,
+        139,
+        19,
+        50,
+        191,
+        82,
+        245
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone may clean up; the rent can only go back to the proposal's creator."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposal",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "proposal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "relations": [
+            "proposal"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "_proposal_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "close_voter_snapshot",
+      "docs": [
+        "Clean-up: closes a voter snapshot and returns its rent to the current owners_authority",
+        "(the account that paid for it). Anyone may call it. A snapshot is only needed until",
+        "voting ends, so it can be closed once the proposal's deadline has passed — or when the",
+        "proposal account no longer exists."
+      ],
+      "discriminator": [
+        188,
+        162,
+        233,
+        184,
+        56,
+        100,
+        68,
+        211
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone may clean up; the rent can only go to the state's owners_authority."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposal",
+          "docs": [
+            "the handler reads it and only lets the snapshot go after the voting deadline."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "proposal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "voter_snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  111,
+                  116,
+                  101,
+                  114,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "proposal"
+              },
+              {
+                "kind": "arg",
+                "path": "voter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_refund",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "_proposal_id",
+          "type": "u64"
+        },
+        {
+          "name": "_voter",
+          "type": "pubkey"
+        }
+      ]
     },
     {
       "name": "create_milestone",
@@ -522,7 +730,8 @@
         "Create a proposal. Unlike voting, the creation threshold reads the",
         "creator's LIVE balance against the voting base (supply - pool vault)",
         "— deliberately fine, because creating a proposal doesn't execute",
-        "anything, it just opens a discussion.",
+        "anything, it just opens a discussion. The voting clock does NOT start",
+        "here: the owner posts the snapshots, then calls `open_voting`.",
         "proposal_type: 0=SPEND 1=ChangePresident 2=AppointFinance",
         "3=AppointCulture 4=ChangeParam 5=ChangeOwnersAuthority",
         "6=DepositToMilestoneFund"
@@ -645,10 +854,12 @@
     {
       "name": "execute_proposal",
       "docs": [
-        "Executes a proposal. owners_authority only. The deadline must have",
-        "passed, quorum + majority met, and the timelock elapsed (for EVERY",
-        "type, SPEND included). For SPEND — re-checks the 30% cap at execution",
-        "time."
+        "Executes a proposal. owners_authority only. Voting must have been opened and",
+        "its deadline passed, quorum (against the base frozen at `open_voting`) +",
+        "majority met, the timelock elapsed (for EVERY type, SPEND included), and the",
+        "proposal not expired (it stays executable for PROPOSAL_EXEC_WINDOW_SECS after",
+        "the timelock and the president's fallback delay). For SPEND — re-checks the",
+        "30% cap at execution time."
       ],
       "discriminator": [
         186,
@@ -688,9 +899,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "governance_mint"
         },
         {
           "name": "treasury_mint"
@@ -743,13 +951,6 @@
             "The Milestone Fund — required for DEPOSIT_TO_MILESTONE_FUND (type 6)."
           ],
           "writable": true,
-          "optional": true
-        },
-        {
-          "name": "quorum_excluded",
-          "docs": [
-            "The registered pool's governance-coin vault (required once a pool is registered)."
-          ],
           "optional": true
         },
         {
@@ -902,6 +1103,9 @@
               }
             ]
           }
+        },
+        {
+          "name": "governance_mint"
         }
       ],
       "args": [
@@ -917,7 +1121,7 @@
         "Sets up Config + treasury (an ATA of treasury_mint, owned by the Config PDA).",
         "governance_mint = the voting coin, treasury_mint = the asset the pool pays",
         "its fee in (wSOL / USDC / USDT). `token_program` is the treasury asset's program.",
-        "`owners_authority` (typically a Squads vault) posts vote snapshots and",
+        "`owners_authority` (the owner's key) posts vote snapshots and",
         "executes proposals. `admin_authority` (a separate key/multisig) can pause",
         "treasury outflows and tune the citizenship threshold. The payer signs and",
         "pays rent but gets no standing power. Ministers start vacant."
@@ -1214,10 +1418,108 @@
       ]
     },
     {
+      "name": "open_voting",
+      "docs": [
+        "owners_authority closes the enrolment and starts the voting clock: from now on votes",
+        "are accepted and no snapshot can be added (so the first voter can no longer shut the",
+        "others out). Also freezes the voting base — supply minus the registered pool vault's",
+        "balance at this very moment — that the quorum will be measured against, so trades,",
+        "liquidity moves in the pool or a supply change cannot move it later. Needs at least",
+        "one snapshot; the sum of all weights cannot exceed the supply. The pool vault must be",
+        "passed once a pool is registered."
+      ],
+      "discriminator": [
+        19,
+        116,
+        149,
+        128,
+        154,
+        243,
+        221,
+        5
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.governance_mint",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "governance_mint"
+        },
+        {
+          "name": "proposal",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  112,
+                  111,
+                  115,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "arg",
+                "path": "proposal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "quorum_excluded",
+          "docs": [
+            "The registered pool's governance-coin vault (required once a pool is registered):",
+            "its balance is left out of the voting base that gets frozen here."
+          ],
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "_proposal_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "post_milestone_snapshot",
       "docs": [
-        "Manual \"citizen\" snapshot for a milestone. Weight must equal the",
-        "holder's real balance and be >= citizenship_threshold_bps of supply."
+        "Manual \"citizen\" snapshot for a milestone. The weight comes from the owner's ONE",
+        "scan of the holders (see post_voter_snapshot): it must be positive, not more than",
+        "the holder's balance right now, and >= citizenship_threshold_bps of supply."
       ],
       "discriminator": [
         225,
@@ -1294,7 +1596,7 @@
         {
           "name": "holder_token_account",
           "docs": [
-            "The holder's real token account — weight is read from here."
+            "The holder's real token account — the posted weight cannot exceed its balance."
           ]
         },
         {
@@ -1345,18 +1647,23 @@
         {
           "name": "holder",
           "type": "pubkey"
+        },
+        {
+          "name": "weight",
+          "type": "u64"
         }
       ]
     },
     {
       "name": "post_voter_snapshot",
       "docs": [
-        "Manual snapshot: only owners_authority can register a voter's weight",
-        "for a proposal. The weight is NOT a free-form number — it must equal",
-        "the voter's real balance in `voter_token_account` right now. Snapshots",
-        "can only be added while no vote has been cast yet, so owners can't",
-        "watch the tally and add favourable voters later. Created once (`init`):",
-        "weight cannot be rewritten and `consumed` cannot be cleared."
+        "Snapshot of one voter's weight for a proposal — owners_authority only, and only",
+        "BEFORE `open_voting`. The owner takes ONE consistent scan of the holders' balances",
+        "and posts the weights from it; the program checks that the weight is positive and",
+        "that the voter still holds at least that much right now. So coins moved to another",
+        "wallet after the scan can't be counted a second time: the other wallet's weight is",
+        "whatever it held at scan time. Created once (`init`): the weight cannot be rewritten",
+        "and `consumed` cannot be cleared."
       ],
       "discriminator": [
         136,
@@ -1399,6 +1706,7 @@
         },
         {
           "name": "proposal",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -1428,7 +1736,7 @@
         {
           "name": "voter_token_account",
           "docs": [
-            "The voter's real token account — weight is read from here, not passed in."
+            "The voter's real token account — the posted weight cannot exceed its balance."
           ]
         },
         {
@@ -1479,6 +1787,10 @@
         {
           "name": "voter",
           "type": "pubkey"
+        },
+        {
+          "name": "weight",
+          "type": "u64"
         }
       ]
     },
@@ -1909,7 +2221,8 @@
       "name": "vote",
       "docs": [
         "Holders vote themselves, each with their own transaction — weight comes",
-        "from the verified snapshot (VoterSnapshot), which must already exist."
+        "from the snapshot (VoterSnapshot), which must already exist. Votes are",
+        "accepted only after the owner has called `open_voting`, and until the deadline."
       ],
       "discriminator": [
         227,
@@ -2188,12 +2501,12 @@
     {
       "code": 6013,
       "name": "ProposalNotActive",
-      "msg": "Voting period still active"
+      "msg": "Voting period already ended"
     },
     {
       "code": 6014,
       "name": "ProposalStillActive",
-      "msg": "Voting period already ended"
+      "msg": "Voting period still active"
     },
     {
       "code": 6015,
@@ -2202,156 +2515,191 @@
     },
     {
       "code": 6016,
-      "name": "VotingAlreadyStarted",
-      "msg": "Cannot add snapshots after voting has started"
+      "name": "VotingAlreadyOpen",
+      "msg": "Voting is already open: no more snapshots can be added"
     },
     {
       "code": 6017,
+      "name": "VotingNotOpen",
+      "msg": "Voting has not been opened yet (the owner must call open_voting after posting snapshots)"
+    },
+    {
+      "code": 6018,
+      "name": "WeightExceedsBalance",
+      "msg": "Snapshot weight is more than the voter's current balance"
+    },
+    {
+      "code": 6019,
+      "name": "NoSnapshots",
+      "msg": "No snapshots were posted for this proposal"
+    },
+    {
+      "code": 6020,
+      "name": "SnapshotWeightExceedsSupply",
+      "msg": "The sum of the posted weights exceeds the coin supply"
+    },
+    {
+      "code": 6021,
+      "name": "ProposalExpired",
+      "msg": "This approved proposal has expired and can no longer be executed"
+    },
+    {
+      "code": 6022,
+      "name": "NotFinishedYet",
+      "msg": "Not finished yet: nothing to clean up"
+    },
+    {
+      "code": 6023,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6024,
       "name": "QuorumNotReached",
       "msg": "Quorum not reached"
     },
     {
-      "code": 6018,
+      "code": 6025,
       "name": "TimelockNotElapsed",
       "msg": "Timelock has not elapsed yet"
     },
     {
-      "code": 6019,
+      "code": 6026,
       "name": "SpendCooldown",
       "msg": "Another spend was executed too recently (spend cooldown)"
     },
     {
-      "code": 6020,
+      "code": 6027,
       "name": "NotEligibleForPayroll",
       "msg": "Signer is not eligible for payroll (not president/minister)"
     },
     {
-      "code": 6021,
+      "code": 6028,
       "name": "PayrollTooSoon",
       "msg": "Salary already claimed today"
     },
     {
-      "code": 6022,
+      "code": 6029,
       "name": "NothingToClaim",
       "msg": "Nothing to claim (bps is 0 or balance empty)"
     },
     {
-      "code": 6023,
+      "code": 6030,
       "name": "ProposalRejected",
       "msg": "Proposal did not pass (against >= for)"
     },
     {
-      "code": 6024,
+      "code": 6031,
       "name": "NotYourSnapshot",
       "msg": "This snapshot does not belong to you"
     },
     {
-      "code": 6025,
+      "code": 6032,
       "name": "SnapshotAccountMismatch",
       "msg": "Snapshot token account does not match the voter/holder or mint"
     },
     {
-      "code": 6026,
+      "code": 6033,
       "name": "AlreadyVoted",
       "msg": "Already voted"
     },
     {
-      "code": 6027,
+      "code": 6034,
       "name": "NoWeight",
       "msg": "No voting weight registered"
     },
     {
-      "code": 6028,
+      "code": 6035,
       "name": "RoleConflict",
       "msg": "A role must be held by a distinct address"
     },
     {
-      "code": 6029,
+      "code": 6036,
       "name": "NotMinister",
       "msg": "Signer is not finance or culture minister"
     },
     {
-      "code": 6030,
+      "code": 6037,
       "name": "WrongRecipient",
       "msg": "Recipient does not match the approved proposal target"
     },
     {
-      "code": 6031,
+      "code": 6038,
       "name": "MilestoneFundMissing",
       "msg": "Milestone fund account missing or mismatched"
     },
     {
-      "code": 6032,
+      "code": 6039,
       "name": "ExceedsDailyLimit",
       "msg": "Exceeds daily spend limit"
     },
     {
-      "code": 6033,
+      "code": 6040,
       "name": "ExceedsWeeklyLimit",
       "msg": "Exceeds weekly spend limit"
     },
     {
-      "code": 6034,
+      "code": 6041,
       "name": "BelowCitizenshipThreshold",
       "msg": "Holder weight below citizenship threshold"
     },
     {
-      "code": 6035,
+      "code": 6042,
       "name": "MilestoneFinalized",
       "msg": "Milestone already finalized"
     },
     {
-      "code": 6036,
+      "code": 6043,
       "name": "MilestoneNotFinalized",
       "msg": "Milestone not finalized yet"
     },
     {
-      "code": 6037,
+      "code": 6044,
       "name": "InvalidBps",
       "msg": "Invalid config parameter"
     },
     {
-      "code": 6038,
+      "code": 6045,
       "name": "PreviousMilestoneNotFinalized",
       "msg": "Previous milestone is missing or not yet finalized"
     },
     {
-      "code": 6039,
+      "code": 6046,
       "name": "AlreadyClaimedMilestone",
       "msg": "Milestone reward already claimed"
     },
     {
-      "code": 6040,
+      "code": 6047,
       "name": "MilestoneClosed",
       "msg": "Milestone is closed (unclaimed part already returned to the fund)"
     },
     {
-      "code": 6041,
+      "code": 6048,
       "name": "MilestoneGraceNotElapsed",
       "msg": "Claim grace period has not elapsed yet"
     },
     {
-      "code": 6042,
+      "code": 6049,
       "name": "PoolAlreadyRegistered",
       "msg": "Fee pool is already registered"
     },
     {
-      "code": 6043,
+      "code": 6050,
       "name": "PoolNotRegistered",
       "msg": "Fee pool is not registered yet"
     },
     {
-      "code": 6044,
+      "code": 6051,
       "name": "PoolMismatch",
       "msg": "Pool is not the governance/treasury pair in fee-only-B mode"
     },
     {
-      "code": 6045,
+      "code": 6052,
       "name": "PositionMismatch",
       "msg": "Position does not belong to this pool or the Config PDA does not hold it"
     },
     {
-      "code": 6046,
+      "code": 6053,
       "name": "ExcludedAccountMissing",
       "msg": "The registered pool vault must be passed to compute the voting base"
     }
@@ -2680,6 +3028,9 @@
           },
           {
             "name": "deadline",
+            "docs": [
+              "0 until `open_voting`; then (opening time + voting_period_secs)."
+            ],
             "type": "i64"
           },
           {
@@ -2689,6 +3040,27 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "voting_open",
+            "docs": [
+              "False while the owner is still posting snapshots; true once `open_voting` was called."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "total_snapshot_weight",
+            "docs": [
+              "Running sum of every snapshot weight posted (checked against the supply at open_voting)."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "base_at_open",
+            "docs": [
+              "The voting base frozen at `open_voting`: supply minus the pool vault balance at that moment."
+            ],
+            "type": "u64"
           }
         ]
       }

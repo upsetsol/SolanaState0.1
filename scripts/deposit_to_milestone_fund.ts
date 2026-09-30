@@ -14,6 +14,7 @@ import {
   loadProgram,
   createProposal,
   postSnapshot,
+  openVoting,
   castVote,
 } from "./lib/env";
 
@@ -34,6 +35,7 @@ async function main() {
   console.log("create_proposal (DEPOSIT_TO_MILESTONE_FUND) id:", id.toString());
 
   await postSnapshot(program, provider, id, me);
+  await openVoting(program, provider, id);
   await castVote(program, provider, id, true);
   console.log("snapshot + vote ok");
   console.log(

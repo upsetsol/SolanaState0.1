@@ -8,7 +8,7 @@
 //                       13 spend_cooldown_secs 14 exec_fallback_secs
 //   VALUE=<number>
 
-import { getProvider, loadProgram, createProposal, postSnapshot, castVote } from "./lib/env";
+import { getProvider, loadProgram, createProposal, postSnapshot, openVoting, castVote } from "./lib/env";
 
 async function main() {
   const paramKey = Number(process.env.PARAM_KEY ?? "5");
@@ -28,6 +28,7 @@ async function main() {
   console.log(`create_proposal (ChangeParam key=${paramKey} value=${value}) id:`, id.toString());
 
   await postSnapshot(program, provider, id, me);
+  await openVoting(program, provider, id);
   await castVote(program, provider, id, true);
   console.log("snapshot + vote ok");
   console.log(`\nAfter deadline + timelock: npx ts-node scripts/execute_proposal.ts ${id}`);

@@ -10,6 +10,7 @@ import {
   loadProgram,
   createProposal,
   postSnapshot,
+  openVoting,
   castVote,
   executeProposal,
   proposalPda,
@@ -30,6 +31,7 @@ async function main() {
     reason: "Precise timelock test",
   });
   await postSnapshot(program, provider, id, me);
+  await openVoting(program, provider, id);
   await castVote(program, provider, id, true);
 
   const proposal = await program.account.proposal.fetch(proposalPda(id));

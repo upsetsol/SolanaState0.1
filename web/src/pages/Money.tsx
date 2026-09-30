@@ -33,16 +33,17 @@ function Salary() {
   const { data, active, run, program, readProgram, rpcOpts, P } = useApp();
   const dec = data.treasuryDecimals;
   const c = data.config;
-  const claim = useFetched(
-    () => (active && P ? readProgram.account.payrollClaim.fetchNullable(P.payroll(active.publicKey)) : Promise.resolve(null)),
-    [active?.publicKey.toBase58(), P?.config.toBase58(), data.now > 0 ? Math.floor(data.now / 5) : 0]
-  );
-  let role = "", bps = 0;
+  // the "already paid today" record is kept per ROLE (0 president, 1 finance, 2 culture), not per wallet
+  let role = "", bps = 0, roleNum = -1;
   if (active) {
-    if (c.president.equals(active.publicKey)) { role = "президент"; bps = Number(c.payrollPresidentBps.toString()); }
-    else if (c.financeMinister.equals(active.publicKey)) { role = "министр финансов"; bps = Number(c.payrollFinanceBps.toString()); }
-    else if (c.cultureMinister.equals(active.publicKey)) { role = "министр культуры"; bps = Number(c.payrollCultureBps.toString()); }
+    if (c.president.equals(active.publicKey)) { role = "президент"; roleNum = 0; bps = Number(c.payrollPresidentBps.toString()); }
+    else if (c.financeMinister.equals(active.publicKey)) { role = "министр финансов"; roleNum = 1; bps = Number(c.payrollFinanceBps.toString()); }
+    else if (c.cultureMinister.equals(active.publicKey)) { role = "министр культуры"; roleNum = 2; bps = Number(c.payrollCultureBps.toString()); }
   }
+  const claim = useFetched(
+    () => (active && P && roleNum >= 0 ? readProgram.account.payrollClaim.fetchNullable(P.payroll(roleNum)) : Promise.resolve(null)),
+    [active?.publicKey.toBase58(), P?.config.toBase58(), roleNum, data.now > 0 ? Math.floor(data.now / 5) : 0]
+  );
   const snapDay = Number(c.treasurySnapshotDay.toString());
   const base = snapDay === Math.floor(data.now / 86400) ? BigInt(c.treasurySnapshotAmount.toString()) : (data.treasury ?? 0n);
   const payout = (base * BigInt(bps)) / 10000n;
@@ -52,9 +53,9 @@ function Salary() {
   const go = () =>
     run("Забрать зарплату", () =>
       program.methods
-        .claimSalary()
+        .claimSalary(roleNum)
         .accounts({
-          claimant: active!.publicKey, config: P!.config, treasuryMint: P!.treasuryMint, payrollClaim: P!.payroll(active!.publicKey),
+          claimant: active!.publicKey, config: P!.config, treasuryMint: P!.treasuryMint, payrollClaim: P!.payroll(roleNum),
           treasury: P!.treasury, claimantTokenAccount: P!.tAta(active!.publicKey), tokenProgram: TPT, systemProgram: SystemProgram.programId,
         })
         .preInstructions([

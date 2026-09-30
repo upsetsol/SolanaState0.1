@@ -21,6 +21,8 @@ export const DEFAULT_PROGRAM_ID = new PublicKey(IDL.address);
 export const TP = TOKEN_2022_PROGRAM_ID;
 /** Token program of the treasury asset (wSOL / USDC / USDT are classic SPL tokens). */
 export const TPT = TOKEN_PROGRAM_ID;
+/** An approved proposal stays executable this long after the timelock and the president's fallback delay (contract constant). */
+export const PROPOSAL_EXEC_WINDOW_SECS = 30 * 86400;
 /** Default treasury asset: wrapped SOL. */
 export const WSOL = NATIVE_MINT;
 export const ATAP = ASSOCIATED_TOKEN_PROGRAM_ID;
@@ -157,7 +159,8 @@ export function pdas(programId: PublicKey, mint: PublicKey, treasuryMint: Public
     snap: (proposal: PublicKey, voter: PublicKey) =>
       f([Buffer.from("voter_snapshot"), proposal.toBuffer(), voter.toBuffer()]),
     tracker: (role: number) => f([Buffer.from("spend_tracker"), config.toBuffer(), Buffer.from([role])]),
-    payroll: (claimant: PublicKey) => f([Buffer.from("payroll"), config.toBuffer(), claimant.toBuffer()]),
+    // the "salary already paid" record is per ROLE: 0 president, 1 finance minister, 2 culture minister
+    payroll: (role: number) => f([Buffer.from("payroll"), config.toBuffer(), Buffer.from([role])]),
     milestone: (n: number | bigint | string | anchor.BN) =>
       f([Buffer.from("milestone"), config.toBuffer(), u64le(n)]),
     mSnap: (milestone: PublicKey, holder: PublicKey) =>

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
+import { createAssociatedTokenAccountIdempotentInstruction, getAccount } from "@solana/spl-token";
 import { useApp } from "../lib/ctx";
-import { ATAP, BN, TPT, fmtDur, fmtRaw, pk, short, tsFmt } from "../lib/chain";
+import { ATAP, BN, TP, TPT, fmtDur, fmtRaw, pk, short, tsFmt } from "../lib/chain";
 import { Badge, Btn, Card, Copy, Field, Kv, Note, TextIn } from "../lib/ui";
 
 export default function Milestones() {
@@ -59,7 +59,7 @@ export default function Milestones() {
 }
 
 function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any; snaps: any[] }) {
-  const { data, active, run, program, rpcOpts, P, mint, scanHolders } = useApp();
+  const { data, active, run, program, rpcOpts, P, mint, scanHolders, connection } = useApp();
   const c = data.config;
   const dec = data.treasuryDecimals; // pool, shares and payouts: treasury asset
   const gdec = data.mintInfo!.decimals; // holders' weights: the voting coin
@@ -73,14 +73,19 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
   const me = active?.publicKey.toBase58() ?? "";
   const supply = data.mintInfo!.supply;
 
-  const snap = (holder: PublicKey) =>
-    program.methods
-      .postMilestoneSnapshot(new BN(n), holder)
+  // weight = what the owner's ONE scan saw (the contract only refuses a weight above the balance the holder has now);
+  // for a single manual entry the balance right now is used
+  const snap = async (holder: PublicKey, weight?: bigint, tokenAccount?: PublicKey) => {
+    const acct = tokenAccount ?? P!.ata(holder);
+    const w = weight ?? (await getAccount(connection, acct, "confirmed", TP)).amount;
+    return program.methods
+      .postMilestoneSnapshot(new BN(n), holder, new BN(w.toString()))
       .accounts({
         owner: active!.publicKey, config: P!.config, governanceMint: mint!, milestoneRecord: pda,
-        holderTokenAccount: P!.ata(holder), milestoneSnapshot: P!.mSnap(pda, holder), systemProgram: SystemProgram.programId,
+        holderTokenAccount: acct, milestoneSnapshot: P!.mSnap(pda, holder), systemProgram: SystemProgram.programId,
       })
       .rpc(rpcOpts());
+  };
 
   const snapEligible = async () => {
     const holders = await scanHolders();
@@ -89,8 +94,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
     if (!eligible.length) { alert("Подходящих держателей не найдено."); return; }
     for (const h of eligible) {
       if (snaps.some((s) => s.account.holder.equals(h.owner))) continue;
-      const r = await run(`Снимок гражданина ${short(h.owner)} (${fmtRaw(h.amount, gdec)})`, () => snap(h.owner));
-      if (!r.ok) break;
+      await run(`Снимок гражданина ${short(h.owner)} (${fmtRaw(h.amount, gdec)})`, () => snap(h.owner, h.amount, h.account));
     }
   };
 
@@ -100,7 +104,7 @@ function MilestoneCard({ n, pda, d, snaps }: { n: number; pda: PublicKey; d: any
         .finalizeMilestone(new BN(n))
         .accounts({
           owner: active!.publicKey, config: P!.config, milestoneRecord: pda,
-          previousMilestone: n > 1 ? P!.milestone(n - 1) : null, milestoneFund: P!.milestoneFund,
+          previousMilestone: n > 1 ? P!.milestone(n - 1) : null, milestoneFund: P!.milestoneFund, governanceMint: mint!,
         })
         .rpc(rpcOpts())
     );

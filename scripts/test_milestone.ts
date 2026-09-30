@@ -45,10 +45,12 @@ async function main() {
     .rpc();
   console.log("create_milestone tx:", tx1, "| milestone #", n.toString());
 
-  // 2. post_milestone_snapshot x N (weight verified on-chain)
+  // 2. post_milestone_snapshot x N — the weight is the holder's balance from ONE scan (here: read right now);
+  //    the program refuses a weight above the balance the holder has at this moment
   for (const holder of holders) {
+    const w = (await provider.connection.getTokenAccountBalance(ata(holder), "confirmed")).value.amount;
     const tx = await program.methods
-      .postMilestoneSnapshot(n, holder)
+      .postMilestoneSnapshot(n, holder, new anchor.BN(w))
       .accounts({
         owner: me,
         config: configPda(),
@@ -71,6 +73,7 @@ async function main() {
       milestoneRecord: mPda,
       previousMilestone: n.toNumber() > 1 ? milestonePda(n.toNumber() - 1) : null,
       milestoneFund: milestoneFundPda(),
+      governanceMint: GOVERNANCE_MINT,
     })
     .rpc();
   console.log("finalize_milestone tx:", tx3);

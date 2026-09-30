@@ -3,7 +3,7 @@
 //
 //   GOVERNANCE_MINT=<mint>
 
-import { getProvider, loadProgram, createProposal, postSnapshot, castVote } from "./lib/env";
+import { getProvider, loadProgram, createProposal, postSnapshot, openVoting, castVote } from "./lib/env";
 
 async function main() {
   const provider = getProvider();
@@ -17,6 +17,7 @@ async function main() {
     reason: "Test wrong recipient guard",
   });
   await postSnapshot(program, provider, id, me);
+  await openVoting(program, provider, id);
   await castVote(program, provider, id, true);
   console.log("proposal", id.toString(), "ready (target = me)");
   console.log(

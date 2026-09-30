@@ -3,6 +3,9 @@
 //
 //   GOVERNANCE_MINT=<mint>
 //   KEYPAIR=~/president.json   (must be president / finance / culture minister)
+//
+// The "salary already paid today" record is kept per ROLE (0 president, 1 finance, 2 culture); the script finds
+// your role from the Config.
 
 import { SystemProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -13,7 +16,7 @@ import {
   configPda,
   treasuryAta,
   treasuryAtaOf,
-  PROGRAM_ID,
+  payrollPda,
   TREASURY_PROGRAM,
   ATA_PROGRAM,
 } from "./lib/env";
@@ -23,13 +26,13 @@ async function main() {
   const program = loadProgram(provider);
   const me = provider.wallet.publicKey;
 
-  const [payrollClaimPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("payroll"), configPda().toBuffer(), me.toBuffer()],
-    PROGRAM_ID
-  );
+  const cfg: any = await program.account.config.fetch(configPda());
+  const role = me.equals(cfg.president) ? 0 : me.equals(cfg.financeMinister) ? 1 : me.equals(cfg.cultureMinister) ? 2 : -1;
+  if (role < 0) throw new Error("this wallet is not the president / finance minister / culture minister");
+  const payrollClaimPda = payrollPda(role);
 
   const tx = await program.methods
-    .claimSalary()
+    .claimSalary(role)
     .accounts({
       claimant: me,
       config: configPda(),

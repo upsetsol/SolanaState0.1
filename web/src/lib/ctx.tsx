@@ -253,17 +253,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       commitment: "confirmed",
       filters: [{ memcmp: { offset: 0, bytes: mint.toBase58() } }],
     });
-    const out: Holder[] = [];
+    // ONE getProgramAccounts answer = one consistent view of all balances (the weights of a vote must describe one moment).
+    // A holder with several token accounts counts through the largest one.
+    const best = new Map<string, Holder>();
     for (const a of accts) {
       try {
         const u = unpackAccount(a.pubkey, a.account, TP);
         // the state itself and the pool (its vault is owned by the Meteora pool authority) cannot vote
         if (u.mint.equals(mint) && u.amount > 0n && !u.owner.equals(P.config) && !u.owner.equals(METEORA_POOL_AUTHORITY)) {
-          out.push({ owner: u.owner, account: a.pubkey, amount: u.amount });
+          const k = u.owner.toBase58();
+          const cur = best.get(k);
+          if (!cur || u.amount > cur.amount) best.set(k, { owner: u.owner, account: a.pubkey, amount: u.amount });
         }
       } catch { /* not a token account */ }
     }
-    return out.sort((a, b) => (a.amount < b.amount ? 1 : -1));
+    return [...best.values()].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   };
 
   const value: Ctx = {

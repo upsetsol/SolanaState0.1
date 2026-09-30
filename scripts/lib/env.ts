@@ -217,6 +217,11 @@ export function milestonePda(n: anchor.BN | number | bigint | string): PublicKey
   )[0];
 }
 
+/** The "salary already paid" record is kept per ROLE: 0 = president, 1 = finance minister, 2 = culture minister. */
+export function payrollPda(role: number): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("payroll"), configPda().toBuffer(), Buffer.from([role])], PROGRAM_ID)[0];
+}
+
 export function milestoneSnapPda(milestone: PublicKey, holder: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("milestone_snap"), milestone.toBuffer(), holder.toBuffer()],
@@ -280,31 +285,64 @@ export async function createProposal(
 }
 
 /**
- * owners_authority posts a snapshot for `voter`. Weight is read on-chain from
- * the voter's real token account — not passed in. Must be done BEFORE anyone
- * votes on this proposal.
+ * owners_authority posts a snapshot for `voter` — BEFORE `openVoting`.
+ * `weight` is the amount the owner's ONE scan of the holders saw (whole scan taken at the same moment; keep the
+ * numbers and post exactly those). The program only refuses a weight of 0 or more than the voter holds right now.
+ * Without `weight` the voter's balance at this moment is used (fine for a quick single-voter test, NOT for a real
+ * multi-holder vote: read all balances once first, see scripts/scan_holders.ts).
  */
 export async function postSnapshot(
   program: any,
   ownerProvider: anchor.AnchorProvider,
   proposalId: anchor.BN | number | bigint | string,
-  voter: PublicKey
+  voter: PublicKey,
+  weight?: anchor.BN | number | bigint | string,
+  tokenAccount?: PublicKey // the voter's account that holds the coins (default: the associated one)
 ): Promise<string> {
   const pda = proposalPda(proposalId);
+  const acct = tokenAccount ?? ata(voter);
+  let w = weight;
+  if (w === undefined) {
+    const bal = await program.provider.connection.getTokenAccountBalance(acct, "confirmed");
+    w = bal.value.amount;
+  }
   return program.methods
-    .postVoterSnapshot(new anchor.BN(proposalId.toString()), voter)
+    .postVoterSnapshot(new anchor.BN(proposalId.toString()), voter, new anchor.BN(w.toString()))
     .accounts({
       owner: ownerProvider.wallet.publicKey,
       config: configPda(),
       proposal: pda,
-      voterTokenAccount: ata(voter),
+      voterTokenAccount: acct,
       voterSnapshot: voterSnapshotPda(pda, voter),
       systemProgram: SystemProgram.programId,
     })
     .rpc();
 }
 
-/** Cast a vote with an already-posted snapshot. */
+/**
+ * owners_authority closes the enrolment and starts the voting clock (all snapshots must be posted first).
+ * Freezes the quorum base (supply minus the pool vault balance right now). After this, votes are accepted and
+ * snapshots are refused.
+ */
+export async function openVoting(
+  program: any,
+  ownerProvider: anchor.AnchorProvider,
+  proposalId: anchor.BN | number | bigint | string
+): Promise<string> {
+  const cfg = await program.account.config.fetch(configPda());
+  return program.methods
+    .openVoting(new anchor.BN(proposalId.toString()))
+    .accounts({
+      owner: ownerProvider.wallet.publicKey,
+      config: configPda(),
+      governanceMint: GOVERNANCE_MINT,
+      proposal: proposalPda(proposalId),
+      quorumExcluded: excludedAccountOf(cfg),
+    })
+    .rpc();
+}
+
+/** Cast a vote with an already-posted snapshot (voting must have been opened). */
 export async function castVote(
   program: any,
   voterProvider: anchor.AnchorProvider,
@@ -335,19 +373,16 @@ export async function executeProposal(
   proposalId: anchor.BN | number | bigint | string,
   opts: { recipient?: PublicKey; milestoneFund?: boolean } = {}
 ): Promise<string> {
-  const cfg = await program.account.config.fetch(configPda());
   return program.methods
     .executeProposal(new anchor.BN(proposalId.toString()))
     .accounts({
       executor: ownerProvider.wallet.publicKey,
       config: configPda(),
-      governanceMint: GOVERNANCE_MINT,
       treasuryMint: TREASURY_MINT,
       proposal: proposalPda(proposalId),
       treasury: treasuryAta(),
       recipientTokenAccount: opts.recipient ?? null,
       milestoneFund: opts.milestoneFund ? milestoneFundPda() : null,
-      quorumExcluded: excludedAccountOf(cfg),
       tokenProgram: TREASURY_PROGRAM,
     })
     .rpc();

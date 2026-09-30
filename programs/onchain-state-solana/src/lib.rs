@@ -23,10 +23,15 @@ declare_id!("FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy");
 //  claim_pool_fees, and the fee can only land on the treasury account.
 //
 // Rules carried over from v3 (see README):
-//  * Vote weight = the voter's REAL token balance, checked when the snapshot
-//    is posted; snapshots only BEFORE the first vote.
-//  * Quorum / proposal-creation threshold: measured against the circulating
-//    supply (supply minus the balance of the registered pool vault).
+//  * Vote weight comes from ONE consistent scan the owner takes of the holders'
+//    balances; the program only checks that a posted weight is > 0 and not more than
+//    the voter's balance right now (so moving the same coins to another wallet after
+//    the scan cannot count them twice). Snapshots are collected first; then the owner
+//    calls `open_voting` — only after that votes are accepted and no snapshot can be added.
+//  * Quorum: measured against the voting base FROZEN when voting opens (supply minus
+//    the balance of the registered pool vault at that moment) — later pool trades,
+//    liquidity moves or supply changes cannot move it. The proposal-creation threshold
+//    still looks at the live numbers.
 //  * Timelock on every proposal type; execute is owners_authority-only with a
 //    president fallback after exec_fallback_secs.
 //  * President / finance minister / culture minister are distinct addresses.
@@ -61,6 +66,11 @@ pub const MAX_PAYROLL_BPS: u64 = 100; // 1%/day
 /// Max % of the morning treasury a minister daily/weekly limit can be set to.
 pub const MAX_MINISTER_BPS: u64 = 2_000; // 20%
 pub const MIN_QUORUM_BPS: u64 = 1;
+/// An approved proposal can be executed only for this long after its timelock and the
+/// president's fallback delay — an old vote does not stay armed forever.
+pub const PROPOSAL_EXEC_WINDOW_SECS: i64 = 30 * SECONDS_PER_DAY;
+/// A proposal whose voting was never opened can be cleaned up after this long.
+pub const ABANDONED_PROPOSAL_SECS: i64 = 30 * SECONDS_PER_DAY;
 
 // --- Meteora DAMM v2 (cp-amm) ------------------------------------------------
 /// Program that owns the pool + position we register and claim fees from.
@@ -88,10 +98,25 @@ pub fn voting_base(supply: u128, excluded: u64) -> u128 {
     supply.saturating_sub(excluded as u128)
 }
 
-/// True when the votes cast clear the quorum bar against the voting base.
-pub fn quorum_met(total_votes: u128, supply: u128, excluded: u64, quorum_bps: u64) -> bool {
-    total_votes.saturating_mul(BPS_DENOM as u128)
-        >= voting_base(supply, excluded).saturating_mul(quorum_bps as u128)
+/// True when the votes cast clear the quorum bar against the voting base that was FROZEN
+/// when voting opened (`Proposal.base_at_open`).
+pub fn quorum_met(total_votes: u128, base: u128, quorum_bps: u64) -> bool {
+    total_votes.saturating_mul(BPS_DENOM as u128) >= base.saturating_mul(quorum_bps as u128)
+}
+
+/// A posted snapshot weight is valid when it is positive and the voter really holds at
+/// least that much right now. (The weight itself comes from the owner's single scan.)
+pub fn snapshot_weight_ok(weight: u64, balance: u64) -> bool {
+    weight > 0 && weight <= balance
+}
+
+/// Last second an approved proposal can still be executed: after voting ended, the
+/// timelock and the president's fallback delay, one more EXEC window.
+pub fn proposal_expires_at(deadline: i64, timelock_secs: i64, fallback_secs: i64) -> i64 {
+    deadline
+        .saturating_add(timelock_secs)
+        .saturating_add(fallback_secs)
+        .saturating_add(PROPOSAL_EXEC_WINDOW_SECS)
 }
 
 /// Reads a 32-byte key out of a foreign account's raw data (None if too short).
@@ -354,13 +379,16 @@ pub mod onchain_state_solana {
     /// Claim salary for a role — once a day, a fixed % of the MORNING treasury
     /// snapshot (not the live balance). Does not use up minister_spend's
     /// daily/weekly limit — this is separate, guaranteed income for holding
-    /// the role.
-    pub fn claim_salary(ctx: Context<ClaimSalary>) -> Result<()> {
+    /// the role. The "already paid today" record is kept per ROLE (0=president,
+    /// 1=finance, 2=culture), not per wallet: handing the role to a new wallet
+    /// does not give the role a second salary the same day. `role` must be the
+    /// caller's own role.
+    pub fn claim_salary(ctx: Context<ClaimSalary>, role: u8) -> Result<()> {
         require!(!ctx.accounts.config.paused, GovError::Paused);
         let signer = ctx.accounts.claimant.key();
         let cfg = &ctx.accounts.config;
 
-        let (role, bps) = if signer == cfg.president {
+        let (holder_role, bps) = if signer == cfg.president {
             (0u8, cfg.payroll_president_bps)
         } else if signer == cfg.finance_minister {
             (1u8, cfg.payroll_finance_bps)
@@ -369,6 +397,7 @@ pub mod onchain_state_solana {
         } else {
             return err!(GovError::NotEligibleForPayroll);
         };
+        require!(role == holder_role, GovError::NotEligibleForPayroll);
 
         let now = Clock::get()?.unix_timestamp;
         let claim = &mut ctx.accounts.payroll_claim;
@@ -408,40 +437,85 @@ pub mod onchain_state_solana {
         Ok(())
     }
 
-    /// Manual snapshot: only owners_authority can register a voter's weight
-    /// for a proposal. The weight is NOT a free-form number — it must equal
-    /// the voter's real balance in `voter_token_account` right now. Snapshots
-    /// can only be added while no vote has been cast yet, so owners can't
-    /// watch the tally and add favourable voters later. Created once (`init`):
-    /// weight cannot be rewritten and `consumed` cannot be cleared.
+    /// Snapshot of one voter's weight for a proposal — owners_authority only, and only
+    /// BEFORE `open_voting`. The owner takes ONE consistent scan of the holders' balances
+    /// and posts the weights from it; the program checks that the weight is positive and
+    /// that the voter still holds at least that much right now. So coins moved to another
+    /// wallet after the scan can't be counted a second time: the other wallet's weight is
+    /// whatever it held at scan time. Created once (`init`): the weight cannot be rewritten
+    /// and `consumed` cannot be cleared.
     pub fn post_voter_snapshot(
         ctx: Context<PostVoterSnapshot>,
         _proposal_id: u64,
         voter: Pubkey,
+        weight: u64,
     ) -> Result<()> {
         require_keys_eq!(
             ctx.accounts.owner.key(),
             ctx.accounts.config.owners_authority,
             GovError::NotOwner
         );
+        let proposal = &mut ctx.accounts.proposal;
+        require!(!proposal.voting_open, GovError::VotingAlreadyOpen);
+        require!(weight > 0, GovError::NoWeight);
         require!(
-            ctx.accounts.proposal.votes_for == 0 && ctx.accounts.proposal.votes_against == 0,
-            GovError::VotingAlreadyStarted
+            snapshot_weight_ok(weight, ctx.accounts.voter_token_account.amount),
+            GovError::WeightExceedsBalance
         );
+        proposal.total_snapshot_weight = proposal
+            .total_snapshot_weight
+            .checked_add(weight as u128)
+            .ok_or(error!(GovError::MathOverflow))?;
 
         let snap = &mut ctx.accounts.voter_snapshot;
-        snap.proposal = ctx.accounts.proposal.key();
+        snap.proposal = proposal.key();
         snap.voter = voter;
-        snap.weight = ctx.accounts.voter_token_account.amount;
+        snap.weight = weight;
         snap.consumed = false;
         snap.bump = ctx.bumps.voter_snapshot;
+        Ok(())
+    }
+
+    /// owners_authority closes the enrolment and starts the voting clock: from now on votes
+    /// are accepted and no snapshot can be added (so the first voter can no longer shut the
+    /// others out). Also freezes the voting base — supply minus the registered pool vault's
+    /// balance at this very moment — that the quorum will be measured against, so trades,
+    /// liquidity moves in the pool or a supply change cannot move it later. Needs at least
+    /// one snapshot; the sum of all weights cannot exceed the supply. The pool vault must be
+    /// passed once a pool is registered.
+    pub fn open_voting(ctx: Context<OpenVoting>, _proposal_id: u64) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.owner.key(),
+            ctx.accounts.config.owners_authority,
+            GovError::NotOwner
+        );
+        let proposal = &mut ctx.accounts.proposal;
+        require!(!proposal.voting_open, GovError::VotingAlreadyOpen);
+        require!(proposal.total_snapshot_weight > 0, GovError::NoSnapshots);
+
+        let supply = ctx.accounts.governance_mint.supply as u128;
+        require!(
+            proposal.total_snapshot_weight <= supply,
+            GovError::SnapshotWeightExceedsSupply
+        );
+        let excluded =
+            excluded_amount(&ctx.accounts.config, ctx.accounts.quorum_excluded.as_deref())?;
+        let base = voting_base(supply, excluded);
+
+        let now = Clock::get()?.unix_timestamp;
+        proposal.base_at_open = base as u64; // base <= supply <= u64::MAX
+        proposal.voting_open = true;
+        proposal.deadline = now
+            .checked_add(ctx.accounts.config.voting_period_secs)
+            .ok_or(error!(GovError::MathOverflow))?;
         Ok(())
     }
 
     /// Create a proposal. Unlike voting, the creation threshold reads the
     /// creator's LIVE balance against the voting base (supply - pool vault)
     /// — deliberately fine, because creating a proposal doesn't execute
-    /// anything, it just opens a discussion.
+    /// anything, it just opens a discussion. The voting clock does NOT start
+    /// here: the owner posts the snapshots, then calls `open_voting`.
     /// proposal_type: 0=SPEND 1=ChangePresident 2=AppointFinance
     ///                3=AppointCulture 4=ChangeParam 5=ChangeOwnersAuthority
     ///                6=DepositToMilestoneFund
@@ -494,18 +568,23 @@ pub mod onchain_state_solana {
         proposal.votes_for = 0;
         proposal.votes_against = 0;
         proposal.created_at = now;
-        proposal.deadline = now + config.voting_period_secs;
+        proposal.deadline = 0; // set by open_voting
         proposal.executed = false;
         proposal.bump = ctx.bumps.proposal;
+        proposal.voting_open = false;
+        proposal.total_snapshot_weight = 0;
+        proposal.base_at_open = 0;
 
         config.proposal_count = config.proposal_count.checked_add(1).unwrap();
         Ok(())
     }
 
     /// Holders vote themselves, each with their own transaction — weight comes
-    /// from the verified snapshot (VoterSnapshot), which must already exist.
+    /// from the snapshot (VoterSnapshot), which must already exist. Votes are
+    /// accepted only after the owner has called `open_voting`, and until the deadline.
     pub fn vote(ctx: Context<Vote>, _proposal_id: u64, support: bool) -> Result<()> {
         let now = Clock::get()?.unix_timestamp;
+        require!(ctx.accounts.proposal.voting_open, GovError::VotingNotOpen);
         require!(now <= ctx.accounts.proposal.deadline, GovError::ProposalNotActive);
 
         let snap = &mut ctx.accounts.voter_snapshot;
@@ -523,14 +602,17 @@ pub mod onchain_state_solana {
         Ok(())
     }
 
-    /// Executes a proposal. owners_authority only. The deadline must have
-    /// passed, quorum + majority met, and the timelock elapsed (for EVERY
-    /// type, SPEND included). For SPEND — re-checks the 30% cap at execution
-    /// time.
+    /// Executes a proposal. owners_authority only. Voting must have been opened and
+    /// its deadline passed, quorum (against the base frozen at `open_voting`) +
+    /// majority met, the timelock elapsed (for EVERY type, SPEND included), and the
+    /// proposal not expired (it stays executable for PROPOSAL_EXEC_WINDOW_SECS after
+    /// the timelock and the president's fallback delay). For SPEND — re-checks the
+    /// 30% cap at execution time.
     pub fn execute_proposal(ctx: Context<ExecuteProposal>, _proposal_id: u64) -> Result<()> {
         require!(!ctx.accounts.config.paused, GovError::Paused);
 
         let now = Clock::get()?.unix_timestamp;
+        require!(ctx.accounts.proposal.voting_open, GovError::VotingNotOpen);
         require!(now > ctx.accounts.proposal.deadline, GovError::ProposalStillActive);
         require!(!ctx.accounts.proposal.executed, GovError::AlreadyExecuted);
 
@@ -544,7 +626,6 @@ pub mod onchain_state_solana {
             );
         }
 
-        let supply = ctx.accounts.governance_mint.supply as u128;
         let quorum_bps = match proposal_type {
             0 | 6 => ctx.accounts.config.quorum_spend_bps,
             1 | 2 | 3 => ctx.accounts.config.quorum_role_bps,
@@ -552,12 +633,10 @@ pub mod onchain_state_solana {
             _ => return err!(GovError::InvalidProposalType),
         };
 
-        let total_votes =
-            (ctx.accounts.proposal.votes_for + ctx.accounts.proposal.votes_against) as u128;
-        let excluded =
-            excluded_amount(&ctx.accounts.config, ctx.accounts.quorum_excluded.as_deref())?;
+        let total_votes = (ctx.accounts.proposal.votes_for as u128)
+            + (ctx.accounts.proposal.votes_against as u128);
         require!(
-            quorum_met(total_votes, supply, excluded, quorum_bps),
+            quorum_met(total_votes, ctx.accounts.proposal.base_at_open as u128, quorum_bps),
             GovError::QuorumNotReached
         );
         require!(
@@ -569,6 +648,15 @@ pub mod onchain_state_solana {
         // (e.g. impeach) before a decision takes effect, and a spend leaves.
         let unlock_at = ctx.accounts.proposal.deadline + ctx.accounts.config.timelock_secs;
         require!(now >= unlock_at, GovError::TimelockNotElapsed);
+        // ...and it does not stay armed forever: old approved votes expire.
+        require!(
+            now <= proposal_expires_at(
+                ctx.accounts.proposal.deadline,
+                ctx.accounts.config.timelock_secs,
+                ctx.accounts.config.exec_fallback_secs
+            ),
+            GovError::ProposalExpired
+        );
 
         // owners_authority executes; the president may step in only after
         // exec_fallback_secs of owner inaction (liveness fallback).
@@ -730,6 +818,42 @@ pub mod onchain_state_solana {
         }
 
         ctx.accounts.proposal.executed = true;
+        Ok(())
+    }
+
+    /// Clean-up: closes a finished proposal and returns its rent to whoever created it.
+    /// Anyone may call it (the money can only go back to the creator). Allowed once the
+    /// proposal was executed or has expired; a proposal whose voting was never opened
+    /// can be closed after ABANDONED_PROPOSAL_SECS.
+    pub fn close_proposal(ctx: Context<CloseProposal>, _proposal_id: u64) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let p = &ctx.accounts.proposal;
+        let c = &ctx.accounts.config;
+        let closable = if p.voting_open {
+            p.executed || now > proposal_expires_at(p.deadline, c.timelock_secs, c.exec_fallback_secs)
+        } else {
+            now > p.created_at.saturating_add(ABANDONED_PROPOSAL_SECS)
+        };
+        require!(closable, GovError::NotFinishedYet);
+        Ok(())
+    }
+
+    /// Clean-up: closes a voter snapshot and returns its rent to the current owners_authority
+    /// (the account that paid for it). Anyone may call it. A snapshot is only needed until
+    /// voting ends, so it can be closed once the proposal's deadline has passed — or when the
+    /// proposal account no longer exists.
+    pub fn close_voter_snapshot(
+        ctx: Context<CloseVoterSnapshot>,
+        _proposal_id: u64,
+        _voter: Pubkey,
+    ) -> Result<()> {
+        let info = ctx.accounts.proposal.to_account_info();
+        if info.owner == ctx.program_id && !info.data_is_empty() {
+            let data = info.try_borrow_data()?;
+            let p = Proposal::try_deserialize(&mut &data[..])?;
+            let now = Clock::get()?.unix_timestamp;
+            require!(p.voting_open && now > p.deadline, GovError::NotFinishedYet);
+        }
         Ok(())
     }
 
@@ -963,12 +1087,14 @@ pub mod onchain_state_solana {
         Ok(())
     }
 
-    /// Manual "citizen" snapshot for a milestone. Weight must equal the
-    /// holder's real balance and be >= citizenship_threshold_bps of supply.
+    /// Manual "citizen" snapshot for a milestone. The weight comes from the owner's ONE
+    /// scan of the holders (see post_voter_snapshot): it must be positive, not more than
+    /// the holder's balance right now, and >= citizenship_threshold_bps of supply.
     pub fn post_milestone_snapshot(
         ctx: Context<PostMilestoneSnapshot>,
         _milestone_number: u64,
         holder: Pubkey,
+        weight: u64,
     ) -> Result<()> {
         require_keys_eq!(
             ctx.accounts.owner.key(),
@@ -977,7 +1103,11 @@ pub mod onchain_state_solana {
         );
         require!(!ctx.accounts.milestone_record.finalized, GovError::MilestoneFinalized);
 
-        let weight = ctx.accounts.holder_token_account.amount;
+        require!(weight > 0, GovError::NoWeight);
+        require!(
+            snapshot_weight_ok(weight, ctx.accounts.holder_token_account.amount),
+            GovError::WeightExceedsBalance
+        );
         let supply = ctx.accounts.governance_mint.supply as u128;
         let threshold_bps = ctx.accounts.config.citizenship_threshold_bps as u128;
         require!(
@@ -1017,6 +1147,11 @@ pub mod onchain_state_solana {
         require!(
             ctx.accounts.milestone_record.total_eligible_weight > 0,
             GovError::NothingToClaim
+        );
+        require!(
+            ctx.accounts.milestone_record.total_eligible_weight
+                <= ctx.accounts.governance_mint.supply as u128,
+            GovError::SnapshotWeightExceedsSupply
         );
         check_previous_milestone(
             ctx.accounts.milestone_record.milestone_number,
@@ -1178,6 +1313,7 @@ pub struct AdminOnly<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(role: u8)]
 pub struct ClaimSalary<'info> {
     #[account(mut)]
     pub claimant: Signer<'info>,
@@ -1192,7 +1328,7 @@ pub struct ClaimSalary<'info> {
         init_if_needed,
         payer = claimant,
         space = 8 + PayrollClaim::INIT_SPACE,
-        seeds = [b"payroll", config.key().as_ref(), claimant.key().as_ref()],
+        seeds = [b"payroll", config.key().as_ref(), &[role]],
         bump
     )]
     pub payroll_claim: Box<Account<'info, PayrollClaim>>,
@@ -1216,10 +1352,10 @@ pub struct PostVoterSnapshot<'info> {
     #[account(seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Account<'info, Config>,
 
-    #[account(seeds = [b"proposal", config.key().as_ref(), &_proposal_id.to_le_bytes()], bump = proposal.bump)]
+    #[account(mut, seeds = [b"proposal", config.key().as_ref(), &_proposal_id.to_le_bytes()], bump = proposal.bump)]
     pub proposal: Account<'info, Proposal>,
 
-    /// The voter's real token account — weight is read from here, not passed in.
+    /// The voter's real token account — the posted weight cannot exceed its balance.
     #[account(
         constraint = voter_token_account.mint == config.governance_mint @ GovError::SnapshotAccountMismatch,
         constraint = voter_token_account.owner == voter @ GovError::SnapshotAccountMismatch,
@@ -1236,6 +1372,25 @@ pub struct PostVoterSnapshot<'info> {
     pub voter_snapshot: Account<'info, VoterSnapshot>,
 
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(proposal_id: u64)]
+pub struct OpenVoting<'info> {
+    pub owner: Signer<'info>,
+
+    #[account(seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(address = config.governance_mint)]
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, seeds = [b"proposal", config.key().as_ref(), &proposal_id.to_le_bytes()], bump = proposal.bump)]
+    pub proposal: Box<Account<'info, Proposal>>,
+
+    /// The registered pool's governance-coin vault (required once a pool is registered):
+    /// its balance is left out of the voting base that gets frozen here.
+    pub quorum_excluded: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 }
 
 #[derive(Accounts)]
@@ -1301,9 +1456,6 @@ pub struct ExecuteProposal<'info> {
     #[account(mut, seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
 
-    #[account(address = config.governance_mint)]
-    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
-
     #[account(address = config.treasury_mint)]
     pub treasury_mint: Box<InterfaceAccount<'info, Mint>>,
 
@@ -1322,10 +1474,58 @@ pub struct ExecuteProposal<'info> {
     #[account(mut)]
     pub milestone_fund: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 
-    /// The registered pool's governance-coin vault (required once a pool is registered).
-    pub quorum_excluded: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
-
     pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+#[instruction(proposal_id: u64)]
+pub struct CloseProposal<'info> {
+    /// Anyone may clean up; the rent can only go back to the proposal's creator.
+    pub caller: Signer<'info>,
+
+    #[account(seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    #[account(
+        mut,
+        close = creator,
+        has_one = creator,
+        seeds = [b"proposal", config.key().as_ref(), &proposal_id.to_le_bytes()],
+        bump = proposal.bump
+    )]
+    pub proposal: Box<Account<'info, Proposal>>,
+
+    /// CHECK: receives the rent; must be the proposal's creator (`has_one` above).
+    #[account(mut)]
+    pub creator: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(proposal_id: u64, voter: Pubkey)]
+pub struct CloseVoterSnapshot<'info> {
+    /// Anyone may clean up; the rent can only go to the state's owners_authority.
+    pub caller: Signer<'info>,
+
+    #[account(seeds = [b"config", config.governance_mint.as_ref()], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    /// CHECK: the proposal PDA of THIS state. It may already be closed; if it still exists,
+    /// the handler reads it and only lets the snapshot go after the voting deadline.
+    #[account(seeds = [b"proposal", config.key().as_ref(), &proposal_id.to_le_bytes()], bump)]
+    pub proposal: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        close = owner_refund,
+        seeds = [b"voter_snapshot", proposal.key().as_ref(), voter.as_ref()],
+        bump = voter_snapshot.bump,
+        constraint = voter_snapshot.proposal == proposal.key() @ GovError::SnapshotAccountMismatch,
+    )]
+    pub voter_snapshot: Account<'info, VoterSnapshot>,
+
+    /// CHECK: receives the rent; must be the current owners_authority.
+    #[account(mut, address = config.owners_authority)]
+    pub owner_refund: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -1521,7 +1721,7 @@ pub struct PostMilestoneSnapshot<'info> {
     )]
     pub milestone_record: Box<Account<'info, MilestoneRecord>>,
 
-    /// The holder's real token account — weight is read from here.
+    /// The holder's real token account — the posted weight cannot exceed its balance.
     #[account(
         constraint = holder_token_account.mint == config.governance_mint @ GovError::SnapshotAccountMismatch,
         constraint = holder_token_account.owner == holder @ GovError::SnapshotAccountMismatch,
@@ -1572,6 +1772,9 @@ pub struct FinalizeMilestone<'info> {
         bump
     )]
     pub milestone_fund: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(address = config.governance_mint)]
+    pub governance_mint: Box<InterfaceAccount<'info, Mint>>,
 }
 
 #[derive(Accounts)]
@@ -1697,9 +1900,16 @@ pub struct Proposal {
     pub votes_for: u64,
     pub votes_against: u64,
     pub created_at: i64,
+    /// 0 until `open_voting`; then (opening time + voting_period_secs).
     pub deadline: i64,
     pub executed: bool,
     pub bump: u8,
+    /// False while the owner is still posting snapshots; true once `open_voting` was called.
+    pub voting_open: bool,
+    /// Running sum of every snapshot weight posted (checked against the supply at open_voting).
+    pub total_snapshot_weight: u128,
+    /// The voting base frozen at `open_voting`: supply minus the pool vault balance at that moment.
+    pub base_at_open: u64,
 }
 
 #[account]
@@ -1786,14 +1996,28 @@ pub enum GovError {
     ExceedsMilestoneDepositCap,
     #[msg("Amount exceeds treasury balance")]
     InsufficientTreasury,
-    #[msg("Voting period still active")]
-    ProposalNotActive,
     #[msg("Voting period already ended")]
+    ProposalNotActive,
+    #[msg("Voting period still active")]
     ProposalStillActive,
     #[msg("Proposal already executed")]
     AlreadyExecuted,
-    #[msg("Cannot add snapshots after voting has started")]
-    VotingAlreadyStarted,
+    #[msg("Voting is already open: no more snapshots can be added")]
+    VotingAlreadyOpen,
+    #[msg("Voting has not been opened yet (the owner must call open_voting after posting snapshots)")]
+    VotingNotOpen,
+    #[msg("Snapshot weight is more than the voter's current balance")]
+    WeightExceedsBalance,
+    #[msg("No snapshots were posted for this proposal")]
+    NoSnapshots,
+    #[msg("The sum of the posted weights exceeds the coin supply")]
+    SnapshotWeightExceedsSupply,
+    #[msg("This approved proposal has expired and can no longer be executed")]
+    ProposalExpired,
+    #[msg("Not finished yet: nothing to clean up")]
+    NotFinishedYet,
+    #[msg("Arithmetic overflow")]
+    MathOverflow,
     #[msg("Quorum not reached")]
     QuorumNotReached,
     #[msg("Timelock has not elapsed yet")]
@@ -1918,12 +2142,45 @@ mod p0_tests {
 
     #[test]
     fn quorum_boundary() {
-        // base = 1000 - 0 = 1000, quorum 10% => need >= 100
-        assert!(!quorum_met(99, 1_000, 0, 1_000));
-        assert!(quorum_met(100, 1_000, 0, 1_000));
-        // half the coins sit in the pool vault: base = 500 => need >= 50
-        assert!(quorum_met(50, 1_000, 500, 1_000));
-        assert!(!quorum_met(49, 1_000, 500, 1_000));
+        // base = 1000, quorum 10% => need >= 100
+        assert!(!quorum_met(99, 1_000, 1_000));
+        assert!(quorum_met(100, 1_000, 1_000));
+        // half the coins sat in the pool vault when voting opened: base = 500 => need >= 50
+        let base = voting_base(1_000, 500);
+        assert!(quorum_met(50, base, 1_000));
+        assert!(!quorum_met(49, base, 1_000));
+    }
+
+    #[test]
+    fn quorum_uses_the_frozen_base_only() {
+        // The base is computed ONCE at open_voting. Whatever happens in the pool afterwards
+        // (someone buys 400 coins out, adds liquidity, the supply changes) is not an input of
+        // quorum_met any more: the same votes against the same frozen base always give the same answer.
+        let frozen = voting_base(1_000, 300); // 700
+        assert!(quorum_met(21, frozen, 300)); // 3% of 700 = 21
+        assert!(!quorum_met(20, frozen, 300));
+        // zero base (everything in the pool) cannot be manipulated into a panic
+        assert!(quorum_met(0, 0, 300));
+    }
+
+    #[test]
+    fn snapshot_weight_rules() {
+        assert!(snapshot_weight_ok(1, 1));
+        assert!(snapshot_weight_ok(100, 250)); // the scan weight may be below today's balance
+        assert!(!snapshot_weight_ok(0, 250)); // zero weight is useless
+        assert!(!snapshot_weight_ok(251, 250)); // can't claim more than the voter holds now
+        assert!(!snapshot_weight_ok(u64::MAX, 0));
+    }
+
+    #[test]
+    fn proposal_expiry_window() {
+        let (deadline, timelock, fallback) = (1_000, 86_400, 3_600);
+        let end = proposal_expires_at(deadline, timelock, fallback);
+        assert_eq!(end, 1_000 + 86_400 + 3_600 + PROPOSAL_EXEC_WINDOW_SECS);
+        // the owner's window (from the unlock) and the president's window (after the fallback) both fit
+        assert!(end > deadline + timelock + fallback);
+        // saturating: absurd inputs must not overflow
+        assert_eq!(proposal_expires_at(i64::MAX, i64::MAX, i64::MAX), i64::MAX);
     }
 
     #[test]

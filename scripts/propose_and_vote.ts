@@ -1,9 +1,10 @@
 // Reference flow: create a SPEND proposal (pay some of the treasury asset to our own
-// wallet — a test scenario), post a VERIFIED snapshot for our wallet (weight
-// is read on-chain from the token account, not passed in), then vote "for".
+// wallet — a test scenario), post a snapshot for our wallet (the weight can't exceed the
+// balance the program sees), OPEN the voting, then vote "for".
 //
-// Snapshots must be posted BEFORE the first vote — the program rejects a
-// snapshot once voting has started.
+// The order matters: snapshots first, then `openVoting` (the voting clock and the frozen quorum
+// base start there), then votes. For a real multi-holder vote use scripts/snapshot_all.ts, which
+// scans all holders ONCE and posts exactly those weights.
 
 import {
   anchor,
@@ -13,6 +14,7 @@ import {
   createProposal,
   postSnapshot,
   castVote,
+  openVoting,
   ata,
 } from "./lib/env";
 import { getAccount } from "@solana/spl-token";
@@ -33,10 +35,13 @@ async function main() {
   });
   console.log("create_proposal id:", id.toString(), "pda:", pda.toBase58());
 
-  // Snapshot ALL voters before anyone votes.
-  const sig2 = await postSnapshot(program, provider, id, me);
+  // Snapshot ALL voters before opening the voting.
   const acct = await getAccount(provider.connection, ata(me), "confirmed", TOKEN_2022_PROGRAM_ID);
-  console.log("post_voter_snapshot tx:", sig2, "| verified weight:", acct.amount.toString());
+  const sig2 = await postSnapshot(program, provider, id, me, acct.amount);
+  console.log("post_voter_snapshot tx:", sig2, "| weight:", acct.amount.toString());
+
+  const sigOpen = await openVoting(program, provider, id);
+  console.log("open_voting tx:", sigOpen);
 
   const sig3 = await castVote(program, provider, id, true);
   console.log("vote tx:", sig3);

@@ -1,4 +1,6 @@
 // Full end-to-end scenario suite against a live cluster (local, devnet, testnet).
+// v4.1 voting flow: the owner posts snapshot weights (from one scan), then calls open_voting; only then votes are
+// accepted; the quorum base is frozen at open_voting.
 // Self-contained: creates the governance mint (Token-2022, metadata, NO tax), initialises
 // with ultra-short windows (the treasury asset is wSOL), funds 3 holders, then runs every
 // governance / money / milestone / negative path, and finally the Meteora pool-fee cycle
@@ -229,7 +231,7 @@ async function main() {
   const trackerPda = (role: number) => PublicKey.findProgramAddressSync([Buffer.from("spend_tracker"), configPda.toBuffer(), Buffer.from([role])], PROGRAM_ID)[0];
   const milestonePda = (n: any) => PublicKey.findProgramAddressSync([Buffer.from("milestone"), configPda.toBuffer(), u64(n)], PROGRAM_ID)[0];
   const mSnapPda = (m: PublicKey, h: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("milestone_snap"), m.toBuffer(), h.toBuffer()], PROGRAM_ID)[0];
-  const payrollPda = (o: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("payroll"), configPda.toBuffer(), o.toBuffer()], PROGRAM_ID)[0];
+  const payrollPda = (role: number) => PublicKey.findProgramAddressSync([Buffer.from("payroll"), configPda.toBuffer(), Buffer.from([role])], PROGRAM_ID)[0];
   const bal = async (a: PublicKey) => {
     try {
       return (await getAccount(conn, a, "confirmed", TP)).amount;
@@ -363,10 +365,25 @@ async function main() {
     voterSnapshot: snapPda(pPda, voter),
     systemProgram: SystemProgram.programId,
   });
-  async function snapshot(id: any, pPda: PublicKey, voter: PublicKey, prog: any = program) {
+  // weight = what the owner's scan saw; by default the voter's balance right now (an honest, prompt scan)
+  async function snapshot(id: any, pPda: PublicKey, voter: PublicKey, prog: any = program, weight?: bigint) {
+    const w = weight ?? (await bal(ata(voter)));
     await prog.methods
-      .postVoterSnapshot(new anchor.BN(id.toString()), voter)
+      .postVoterSnapshot(new anchor.BN(id.toString()), voter, new anchor.BN(w.toString()))
       .accounts(snapAccts(pPda, voter, prog.provider.wallet.publicKey))
+      .rpc();
+  }
+  // the owner closes the enrolment: votes are accepted from now on, the voting base is frozen
+  async function openVoting(id: any, prog: any = program) {
+    await prog.methods
+      .openVoting(new anchor.BN(id.toString()))
+      .accounts({
+        owner: prog.provider.wallet.publicKey,
+        config: configPda,
+        governanceMint: mint.publicKey,
+        proposal: proposalPda(id),
+        quorumExcluded: await excl(),
+      })
       .rpc();
   }
   async function vote(kp: Keypair, id: any, pPda: PublicKey, support: boolean) {
@@ -381,13 +398,11 @@ async function main() {
       .accounts({
         executor: who.publicKey,
         config: configPda,
-        governanceMint: mint.publicKey,
         treasuryMint: NATIVE_MINT,
         proposal: proposalPda(id),
         treasury,
         recipientTokenAccount: opts.recipient ?? null,
         milestoneFund: opts.milestoneFund ? milestoneFundPda : null,
-        quorumExcluded: await excl(),
         tokenProgram: TPT,
       })
       .rpc();
@@ -399,10 +414,14 @@ async function main() {
     const { id, pPda } = await propose(type, target, amount, paramKey, reason);
     await snapshot(id, pPda, holders[0].publicKey);
     await snapshot(id, pPda, holders[1].publicKey);
+    await openVoting(id);
     await vote(holders[0], id, pPda, true);
     await vote(holders[1], id, pPda, true);
     return { id, pPda };
   }
+
+  let spend1: { id: any; pPda: PublicKey } | null = null;
+  let spend2: { id: any; pPda: PublicKey } | null = null;
 
   // ===== SPEND happy path + cooldown =====
   {
@@ -422,21 +441,49 @@ async function main() {
     // Two SPEND proposals created + voted up front, so the second is ready to
     // execute the instant the first one does (to actually hit the cooldown).
     const p1 = await propose(0, holders[0].publicKey, SEED_LAMPORTS / 10n, 0, "spend #1");
+    spend1 = p1;
     await snapshot(p1.id, p1.pPda, holders[0].publicKey);
     await expectErr("snapshot posted by a non-owner → NotOwner", "NotOwner", () =>
       snapshot(p1.id, p1.pPda, holders[1].publicKey, progFor(holders[1]))
     );
+    // a weight the voter does not actually hold, and a zero weight, are refused
+    const cBal = await bal(ata(holders[2].publicKey));
+    await expectErr("snapshot weight above the voter's balance → WeightExceedsBalance", "WeightExceedsBalance", () =>
+      snapshot(p1.id, p1.pPda, holders[2].publicKey, program, cBal + 1n)
+    );
+    await expectErr("snapshot with zero weight → NoWeight", "NoWeight", () =>
+      snapshot(p1.id, p1.pPda, holders[2].publicKey, program, 0n)
+    );
     await snapshot(p1.id, p1.pPda, holders[1].publicKey);
+    // a lower weight than the balance is fine: the owner's scan may be a bit older than the balance
+    await expectErr("open voting on a proposal without snapshots → NoSnapshots", "NoSnapshots", async () => {
+      const empty = await propose(0, holders[0].publicKey, 1000n, 0, "no snapshots yet");
+      await openVoting(empty.id);
+    });
+    await expectErr("vote before the owner opened voting → VotingNotOpen", "VotingNotOpen", () =>
+      vote(holders[0], p1.id, p1.pPda, true)
+    );
+    await expectErr("open voting by a non-owner → NotOwner", "NotOwner", () => openVoting(p1.id, progFor(holders[0])));
+    await expectOk("owner opens voting (base frozen)", () => openVoting(p1.id));
     await vote(holders[0], p1.id, p1.pPda, true);
     await expectErr("vote twice → AlreadyVoted", "AlreadyVoted", () => vote(holders[0], p1.id, p1.pPda, true));
     await vote(holders[1], p1.id, p1.pPda, true);
-    await expectErr("snapshot after voting started → VotingAlreadyStarted", "VotingAlreadyStarted", () =>
+    await expectErr("snapshot after voting opened → VotingAlreadyOpen", "VotingAlreadyOpen", () =>
       snapshot(p1.id, p1.pPda, holders[2].publicKey)
     );
+    await expectErr("open voting a second time → VotingAlreadyOpen", "VotingAlreadyOpen", () => openVoting(p1.id));
+    {
+      const pr1 = await program.account.proposal.fetch(p1.pPda);
+      const bsupply = 1_000_000_000n * 10n ** BigInt(DEC);
+      record("voting base was frozen at open_voting (supply, no pool yet)", BigInt(pr1.baseAtOpen.toString()) === bsupply, `${pr1.baseAtOpen}`);
+      record("sum of snapshot weights recorded", BigInt(pr1.totalSnapshotWeight.toString()) === amts[0] + amts[1], `${pr1.totalSnapshotWeight}`);
+    }
 
     const p2 = await propose(0, holders[0].publicKey, SEED_LAMPORTS / 100n, 0, "spend #2");
+    spend2 = p2;
     await snapshot(p2.id, p2.pPda, holders[0].publicKey);
     await snapshot(p2.id, p2.pPda, holders[1].publicKey);
+    await openVoting(p2.id);
     await vote(holders[0], p2.id, p2.pPda, true);
     await vote(holders[1], p2.id, p2.pPda, true);
 
@@ -489,6 +536,7 @@ async function main() {
   {
     const { id, pPda } = await propose(0, holders[0].publicKey, 1000n, 0, "quorum test");
     await snapshot(id, pPda, holders[2].publicKey); // only tiny holder
+    await openVoting(id);
     await vote(holders[2], id, pPda, true);
     await waitChain((await deadlineOf(pPda)) + TL + 2);
     await expectErr("execute below quorum → QuorumNotReached", "QuorumNotReached", () =>
@@ -501,6 +549,7 @@ async function main() {
     const { id, pPda } = await propose(0, holders[0].publicKey, 1000n, 0, "reject test");
     await snapshot(id, pPda, holders[0].publicKey);
     await snapshot(id, pPda, holders[2].publicKey);
+    await openVoting(id);
     await vote(holders[0], id, pPda, false); // big against
     await vote(holders[2], id, pPda, true); // small for
     await waitChain((await deadlineOf(pPda)) + TL + 2);
@@ -559,11 +608,11 @@ async function main() {
   }
 
   // ===== salary =====
-  const salaryAccts = (kp: Keypair) => ({
+  const salaryAccts = (kp: Keypair, role: number) => ({
     claimant: kp.publicKey,
     config: configPda,
     treasuryMint: NATIVE_MINT,
-    payrollClaim: payrollPda(kp.publicKey),
+    payrollClaim: payrollPda(role),
     treasury,
     claimantTokenAccount: tAta(kp.publicKey),
     tokenProgram: TPT,
@@ -571,17 +620,20 @@ async function main() {
   });
   {
     const before = await tbal(tAta(me));
-    await expectOk("claim_salary (president)", () => program.methods.claimSalary().accounts(salaryAccts(payer)).rpc());
+    await expectOk("claim_salary (president, role 0)", () => program.methods.claimSalary(0).accounts(salaryAccts(payer, 0)).rpc());
     record("salary arrived in wSOL", (await tbal(tAta(me))) > before, `${before} → ${await tbal(tAta(me))}`);
     await expectErr("claim_salary twice same day → PayrollTooSoon", "PayrollTooSoon", () =>
-      program.methods.claimSalary().accounts(salaryAccts(payer)).rpc()
+      program.methods.claimSalary(0).accounts(salaryAccts(payer, 0)).rpc()
+    );
+    await expectErr("claim_salary claiming somebody else's role (finance) as president → NotEligibleForPayroll", "NotEligibleForPayroll", () =>
+      program.methods.claimSalary(1).accounts(salaryAccts(payer, 1)).rpc()
     );
   }
 
   // ===== pause =====
   await expectOk("set_pause(true)", () => program.methods.setPause(true).accounts({ admin: me, config: configPda }).rpc());
   await expectErr("claim_salary while paused → Paused", "Paused", () =>
-    progFor(holders[1]).methods.claimSalary().accounts(salaryAccts(holders[1])).rpc()
+    progFor(holders[1]).methods.claimSalary(1).accounts(salaryAccts(holders[1], 1)).rpc()
   );
   await expectOk("set_pause(false)", () => program.methods.setPause(false).accounts({ admin: me, config: configPda }).rpc());
 
@@ -602,11 +654,13 @@ async function main() {
 
   // ===== milestone cycle =====
   const msAccts = (m: PublicKey, n: any) => ({ owner: me, config: configPda, governanceMint: mint.publicKey, milestoneRecord: m, systemProgram: SystemProgram.programId });
-  const msSnap = (m: PublicKey, n: any, h: PublicKey) =>
-    program.methods
-      .postMilestoneSnapshot(new anchor.BN(n.toString()), h)
+  const msSnap = async (m: PublicKey, n: any, h: PublicKey, weight?: bigint) => {
+    const w = weight ?? (await bal(ata(h)));
+    return program.methods
+      .postMilestoneSnapshot(new anchor.BN(n.toString()), h, new anchor.BN(w.toString()))
       .accounts({ ...msAccts(m, n), holderTokenAccount: ata(h), milestoneSnapshot: mSnapPda(m, h) })
       .rpc();
+  };
   const claimAccts = (m: PublicKey, h: PublicKey) => ({
     payer: me,
     config: configPda,
@@ -629,10 +683,13 @@ async function main() {
     await expectErr("milestone snapshot for tiny holder → BelowCitizenshipThreshold", "BelowCitizenshipThreshold", () =>
       msSnap(mPda, n, holders[2].publicKey)
     );
+    await expectErr("milestone snapshot weight above the holder's balance → WeightExceedsBalance", "WeightExceedsBalance", async () =>
+      msSnap(mPda, n, holders[2].publicKey, (await bal(ata(holders[2].publicKey))) + 1n)
+    );
     await expectOk("finalize_milestone", () =>
       program.methods
         .finalizeMilestone(new anchor.BN(n.toString()))
-        .accounts({ owner: me, config: configPda, milestoneRecord: mPda, previousMilestone: null, milestoneFund: milestoneFundPda })
+        .accounts({ owner: me, config: configPda, milestoneRecord: mPda, previousMilestone: null, milestoneFund: milestoneFundPda, governanceMint: mint.publicKey })
         .rpc()
     );
     const rec = await program.account.milestoneRecord.fetch(mPda);
@@ -662,7 +719,7 @@ async function main() {
     await expectOk("milestone 2: finalize (base excludes milestone 1 reserve)", () =>
       program.methods
         .finalizeMilestone(new anchor.BN(n2.toString()))
-        .accounts({ owner: me, config: configPda, milestoneRecord: m2, previousMilestone: milestonePda(new anchor.BN(n2.toString()).subn(1)), milestoneFund: milestoneFundPda })
+        .accounts({ owner: me, config: configPda, milestoneRecord: m2, previousMilestone: milestonePda(new anchor.BN(n2.toString()).subn(1)), milestoneFund: milestoneFundPda, governanceMint: mint.publicKey })
         .rpc()
     );
     await expectOk("milestone 2: pay holder A only", () =>
@@ -697,6 +754,52 @@ async function main() {
     await expectOk("president executes after owners stay silent (fallback)", execAsA);
     const cfgP = await program.account.config.fetch(configPda);
     record("fallback execution applied the vote", cfgP.president.equals(me), cfgP.president.toBase58());
+  }
+
+  // ===== salary is kept per ROLE: a new wallet in the same role cannot be paid a second time the same day =====
+  {
+    const D = Keypair.generate();
+    await sendRetry(conn, new Transaction().add(SystemProgram.transfer({ fromPubkey: me, toPubkey: D.publicKey, lamports: 0.02 * LAMPORTS_PER_SOL })), [payer], { commitment: "confirmed" });
+    await ensureT(D.publicKey);
+    await expectOk("finance minister B claims today's salary (role 1)", () =>
+      progFor(holders[1]).methods.claimSalary(1).accounts(salaryAccts(holders[1], 1)).rpc()
+    );
+    await expectOk("appoint a NEW wallet D as finance minister", () => passRole(2, D.publicKey, "D finance"));
+    await expectErr("the new finance wallet D claims the same day → PayrollTooSoon (the record is per role)", "PayrollTooSoon", () =>
+      progFor(D).methods.claimSalary(1).accounts(salaryAccts(D, 1)).rpc()
+    );
+  }
+
+  // ===== clean-up: closing finished proposals / snapshots returns the rent =====
+  {
+    const closeProp = (id: any, pPda: PublicKey, creator: PublicKey, prog: any) =>
+      prog.methods.closeProposal(new anchor.BN(id.toString())).accounts({ caller: prog.provider.wallet.publicKey, config: configPda, proposal: pPda, creator }).rpc();
+    const closeSnap = (id: any, pPda: PublicKey, voter: PublicKey, prog: any, refund: PublicKey = me) =>
+      prog.methods
+        .closeVoterSnapshot(new anchor.BN(id.toString()), voter)
+        .accounts({ caller: prog.provider.wallet.publicKey, config: configPda, proposal: pPda, voterSnapshot: snapPda(pPda, voter), ownerRefund: refund })
+        .rpc();
+    const stranger = progFor(holders[2]); // a small holder with no special rights
+    const s1 = spend1!, s2 = spend2!;
+    await expectErr("close a snapshot but send the rent to the attacker's address → ConstraintAddress", "ConstraintAddress", () =>
+      closeSnap(s2.id, s2.pPda, holders[0].publicKey, stranger, holders[2].publicKey)
+    );
+    const b0 = await conn.getBalance(me);
+    await expectOk("a stranger closes a voter snapshot of a finished vote (rent goes to the owner)", () => closeSnap(s2.id, s2.pPda, holders[0].publicKey, stranger));
+    record("the owner got the snapshot rent back", (await conn.getBalance(me)) > b0, `${b0} → ${await conn.getBalance(me)}`);
+    // an open vote that has not finished yet cannot be cleaned up
+    const fresh = await propose(0, holders[0].publicKey, 1000n, 0, "clean-up test");
+    await expectErr("close a proposal whose voting was never opened → NotFinishedYet", "NotFinishedYet", () => closeProp(fresh.id, fresh.pPda, me, stranger));
+    await snapshot(fresh.id, fresh.pPda, holders[0].publicKey);
+    await openVoting(fresh.id);
+    await expectErr("close a snapshot while voting is still running → NotFinishedYet", "NotFinishedYet", () => closeSnap(fresh.id, fresh.pPda, holders[0].publicKey, stranger));
+    await expectErr("close a proposal that is open but neither executed nor expired → NotFinishedYet", "NotFinishedYet", () => closeProp(fresh.id, fresh.pPda, me, stranger));
+    await expectErr("close a proposal but send the rent to somebody else → ConstraintHasOne", "ConstraintHasOne", () => closeProp(s1.id, s1.pPda, holders[2].publicKey, stranger));
+    const b1 = await conn.getBalance(me);
+    await expectOk("a stranger closes an EXECUTED proposal (rent goes back to its creator)", () => closeProp(s1.id, s1.pPda, me, stranger));
+    record("the creator got the proposal rent back and the account is gone", (await conn.getBalance(me)) > b1 && (await conn.getAccountInfo(s1.pPda)) === null, `${b1} → ${await conn.getBalance(me)}`);
+    await expectOk("its leftover snapshots can still be closed once the proposal account is gone", () => closeSnap(s1.id, s1.pPda, holders[1].publicKey, stranger));
+    await expectErr("closing the same proposal again fails (account already closed)", "AccountNotInitialized", () => closeProp(s1.id, s1.pPda, me, stranger));
   }
 
   // ===== Meteora pool fee -> treasury =====
@@ -827,6 +930,37 @@ async function main() {
     await expectErr("claim_pool_fees with a different destination → ConstraintAddress", "ConstraintAddress", async () =>
       progFor(holders[2]).methods.claimPoolFees().accounts(await claimAcctsFor(holders[2].publicKey, attackerAta)).rpc()
     );
+
+    // ---- the quorum base is FROZEN at open_voting: a pool trade afterwards can no longer flip the result
+    {
+      const vaultAddr = (await excl())!;
+      const base = SUPPLY - (await bal(vaultAddr)); // what open_voting will freeze
+      const quorum = (base * 300n) / 10_000n; // quorum(spend) = 3%
+      const weight = quorum + 50_000n * 10n ** BigInt(DEC); // 0.05M coins above the bar
+      const dq = Keypair.generate();
+      await sendRetry(conn, new Transaction().add(SystemProgram.transfer({ fromPubkey: me, toPubkey: dq.publicKey, lamports: 0.02 * LAMPORTS_PER_SOL })), [payer], { commitment: "confirmed" });
+      await sendRetry(
+        conn,
+        new Transaction().add(
+          createAssociatedTokenAccountIdempotentInstruction(me, ata(dq.publicKey), dq.publicKey, mint.publicKey, TP, ATAP),
+          createTransferCheckedInstruction(myAta, mint.publicKey, ata(dq.publicKey), me, weight, DEC, [], TP)
+        ),
+        [payer],
+        { commitment: "confirmed" }
+      );
+      const pq = await propose(0, holders[0].publicKey, 1000n, 0, "frozen base");
+      await snapshot(pq.id, pq.pPda, dq.publicKey);
+      await openVoting(pq.id);
+      const frozen = BigInt((await program.account.proposal.fetch(pq.pPda)).baseAtOpen.toString());
+      record("open_voting froze the base = supply − pool vault balance", frozen === base, `${frozen} vs ${base}`);
+      await vote(dq, pq.id, pq.pPda, true);
+      // a trader now buys a big chunk of coins OUT of the pool: the LIVE base would grow and veto the vote (the old hole)
+      await swap(NATIVE_MINT, mint.publicKey, new BN(60_000_000));
+      const liveQuorum = ((SUPPLY - (await bal(vaultAddr))) * 300n) / 10_000n;
+      record("after the buy a LIVE quorum would exceed the votes (the old veto)", weight < liveQuorum, `votes ${weight} < live quorum ${liveQuorum}`);
+      await waitChain((await deadlineOf(pq.pPda)) + TL + 2);
+      await expectOk("execute passes: the frozen base ignores the pool trade", () => execute(pq.id, { recipient: tAta(holders[0].publicKey) }));
+    }
   }
 
   // ---------- summary ----------

@@ -2,7 +2,7 @@
 //
 //   GOVERNANCE_MINT=<mint>
 //   KEYPAIR=~/holder-d.json    (NOT owners_authority)
-//   PROPOSAL_ID=<id>           an existing, not-yet-voted proposal
+//   PROPOSAL_ID=<id>           an existing proposal whose voting has not been opened yet
 
 import { anchor, getProvider, loadProgram, configPda, proposalPda, voterSnapshotPda, ata, SystemProgram } from "./lib/env";
 
@@ -16,7 +16,7 @@ async function main() {
   console.log(me.toBase58(), "tries to self-post a snapshot...");
   try {
     await program.methods
-      .postVoterSnapshot(new anchor.BN(proposalId), me)
+      .postVoterSnapshot(new anchor.BN(proposalId), me, new anchor.BN(1))
       .accounts({
         owner: me,
         config: configPda(),

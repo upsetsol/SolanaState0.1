@@ -144,7 +144,9 @@ npx ts-node scripts/execute_proposal.ts 0 --spend
 | Купить / продать в пуле (тест) | любой | `pool_swap.ts` |
 | Создать фонд вех | owner | `setup_milestone_fund.ts` |
 | Состояние | любой | `inspect.ts` |
-| Создать предложение + голос | холдер (снимок постит owner) | `propose_and_vote.ts`, `change_param.ts`, `appoint_minister.ts`, `appoint_culture_minister.ts`, `change_president.ts`, `change_owners_authority.ts` |
+| Создать предложение | холдер | `propose_and_vote.ts` (пример «всё в одном» для одного кошелька), `change_param.ts`, `appoint_minister.ts`, `appoint_culture_minister.ts`, `change_president.ts`, `change_owners_authority.ts` |
+| Внести избирателей: один скан → готовые веса (v4.1) | owner | `snapshot_all.ts` (`PROPOSAL_ID=…`, `OPEN=1` — заодно начать голосование) |
+| Начать голосование (заморозить базу кворума) | owner | `open_voting.ts` (`PROPOSAL_ID=…`) |
 | Пополнить фонд вех (через голосование) | холдер | `deposit_to_milestone_fund.ts` |
 | Исполнить решение | owner (президент — через сутки, если owner молчит) | `execute_proposal.ts` |
 | Зарплата | президент/министры | `claim_salary.ts` |
