@@ -1,0 +1,58 @@
+[
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.1",
+    "title": "create a pool with the WHOLE supply as one-sided liquidity (no SOL), locked forever",
+    "verdict": "OK",
+    "note": "1,000,000,000 coins in, price range 1e-8..0.000001 SOL/coin",
+    "status": ""
+  },
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.2",
+    "title": "register_pool accepts the one-sided pool",
+    "verdict": "OK",
+    "note": "state now owns the locked position",
+    "status": ""
+  },
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.3",
+    "title": "the dev wallet's coins after the launch",
+    "verdict": "OK",
+    "note": "dev holds 0 coins; pool vault holds 1,000,000,000 coins; SOL in pool 0.0000",
+    "status": ""
+  },
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.4",
+    "title": "buys along the curve",
+    "verdict": "INFO",
+    "note": "buy 0.10 SOL -> 9,419,495 coins, price now 1.02e-8 SOL/coin | buy 2.00 SOL -> 159,713,283 coins, price now 1.39e-8 SOL/coin | buy 20.00 SOL -> 557,451,713 coins, price now 8.35e-8 SOL/coin",
+    "status": ""
+  },
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.5",
+    "title": "a sell of half of the bought coins works (the buyer can exit)",
+    "verdict": "OK",
+    "note": "price after the sell 2.21e-8 SOL/coin",
+    "status": ""
+  },
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.6",
+    "title": "claim_pool_fees: the state treasury gets 80% of the 5% fee (it owns 100% of the liquidity)",
+    "verdict": "INFO",
+    "note": "volume: buys 22.10 SOL + the sell 14.82 SOL (after its fee); treasury received 1.5079 SOL = 4.08% of the volume (expected ≈4%: 80% of 5%)",
+    "status": ""
+  },
+  {
+    "group": "Single-sided launch (dev holds 0)",
+    "id": "SS.7",
+    "title": "governance side effect: the voting base (supply minus the pool's coins) after these buys",
+    "verdict": "INFO",
+    "note": "363,292,246 coins = 36.33% of the supply — the first buyers ARE the electorate; early votes are decided by very few coins",
+    "status": ""
+  }
+]
