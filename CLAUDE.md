@@ -75,6 +75,27 @@
 (4) право выпуска монет отозвать сразу после создания пула; (5) `scripts/create_pool.ts` пока умеет только двустороннюю ликвидность — нужна опция `SINGLE_SIDED=1 PRICE_MIN= PRICE_MAX=` (не сделано, ждёт решения Никиты).
 Test 1 так не исправить (у дева 97,9% выпуска) — это решается новой монетой при боевом запуске.
 
+### Репетиции 2026-10-02 (локально, потом devnet): обновление программы и «Test 2» (дев = 0)
+- **Локально доказано, что Test 1 переживёт обновление до v4.1:** поднята копия с СТАРЫМ боевым байт-кодом (`target/backup/…`), на ней состояние как Test 1 (монета, государство, фонд вех, двусторонний пул, покупка 0,005 SOL);
+  обновление на месте (`solana program extend` +34 616 Б → `scripts/make_buffer.ts` → `scripts/upgrade_program.ts --upgrade`, 580 кусков по 900 Б, хэш sha256 `563ccd0c…` совпал). После этого НОВЫЙ код на СТАРОМ Config:
+  `claim_pool_fees` работает (казна получила комиссию), `create_proposal` → `post_voter_snapshot` → `open_voting` → `vote` проходят. Значит у Test 1 на mainnet после обновления продолжат работать и сбор комиссии, и голосование.
+- **Инструменты запуска «Test 2»:** `create_pool.ts` с `SINGLE_SIDED=1 TOKEN_AMOUNT=all START_FDV=<SOL> [END_MULT=10000] [START_IN_SECS=<сек>]` (весь выпуск в пул, цена старта = START_FDV / выпуск, окно до START×END_MULT, старт торгов с задержкой);
+  `revoke_mint_authority.ts` (необратимо, `CONFIRM=yes`, `ALSO_METADATA=yes` — ещё и имя/логотип); `launch_check.ts` (только чтение, 11 проверок: у дева 0, пул держит выпуск, право выпуска отозвано, позиция у государства и заблокирована, комиссия 5%/20% Meteora, доля казны 100%).
+  Локально: до времени старта покупка отклоняется (`SwapDisabledError`), после — покупки/продажи/сбор в казну работают (казна 4% оборота), чек-лист ALL PASS. Пример диапазона: START_FDV=30 → весь выпуск стоит 30 SOL на старте, выкупить ВСЕ монеты стоило бы ≈3000 SOL.
+
+### ПАУЗА (Роман, 2026-10-02): devnet-обновление до v4.1 загружено на 95% — завтра продолжить
+Буфер на devnet создан и заполнен на **549 из 580 кусков (95%)**: адрес буфера `8faxeSAMdtphdbki3p3UrG73TpLdfoASp3CStB4TwUX1` (залог 2,65 SOL лежит в нём и вернётся при обновлении), ключ буфера — **`~/devnet-buffer-FG7Y.json`** (вне репозитория,
+chmod 600; без него буфер не продолжить). Программа на devnet пока ещё старая v4 (ничего не заменено). Продолжить (скрипт возобновляемый, дописывает недостающие куски, сверяет побайтно, потом обновляет):
+```bash
+cd /Users/romantalanin/Desktop/onchain-state-solana-main
+export ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=~/.config/solana/id.json PROGRAM_ID=FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy BUFFER_KEYPAIR=~/devnet-buffer-FG7Y.json
+npx ts-node scripts/upgrade_program.ts --upgrade      # публичный devnet режет запросы: при 429 просто запустить ещё раз
+```
+Затем «Test 2» на devnet (с кошелька `A7mn…` на devnet, ≈4,1 SOL минус буфер, который вернётся): `create_mint` (NAME="Test 2" SYMBOL=TEST2 INITIAL_SUPPLY=1000000000) → `initialize` (PARAMS=test) → `setup_milestone_fund` →
+`create_pool` (SINGLE_SIDED=1 TOKEN_AMOUNT=all START_FDV=<SOL> START_IN_SECS=60) → `register_pool` → `revoke_mint_authority` (CONFIRM=yes ALSO_METADATA=yes) → `launch_check` (DEV=<адрес создателя>) → покупки/продажа отдельным кошельком (`pool_swap.ts`) →
+`claim_pool_fees` → `pool_report`. START_FDV для Test 2 Никита ещё не назвал (для devnet-репетиции можно 30). Локальный прогон ровно этих шагов прошёл целиком. Прогон по сети devnet — с публичным RPC без Rust CLI (CLI до devnet не достаёт — только Node-скрипты).
+Улучшения этой сессии в `scripts/upgrade_program.ts`: подтверждение транзакций опросом по HTTP (без websocket, который режется 429), больше повторов, режим параллельных потоков `WORKER=k/n` (не больше 3 потоков на публичном RPC — 6 вызывали лимиты).
+
 ## Кто есть кто
 - **Роман** (пользователь): работает **посредником** между агентом и **Никитой** (единственный владелец проекта, «owner»).
   Никита тестирует и принимает продуктовые решения; его сообщения Роман пересылает в чат. Местоимений по имени не выбирать.

@@ -8,6 +8,9 @@
 //
 //   ANCHOR_PROVIDER_URL=<rpc> ANCHOR_WALLET=<upgrade authority keypair> BUFFER_KEYPAIR=<buffer keypair.json> \
 //   PROGRAM_ID=<program> SO=target/deploy/onchain_state_solana.so npx ts-node scripts/upgrade_program.ts [--upgrade]
+//
+// Faster on a slow public RPC: run several copies at once, each with WORKER=k/n (e.g. WORKER=0/5 ... WORKER=4/5): copy k writes only the chunks
+// whose number leaves remainder k when divided by n and does nothing else. When all workers are done, run it once more WITHOUT WORKER (verifies and, with --upgrade, upgrades).
 import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_CLOCK_PUBKEY } from "@solana/web3.js";
 import * as fs from "fs";
 import * as os from "os";
@@ -47,10 +50,16 @@ async function send(ix: TransactionInstruction) {
       tx.recentBlockhash = blockhash;
       tx.sign(payer);
       const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-      await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-      return sig;
+      // confirm by polling over HTTP (websocket subscriptions get rate-limited on public RPCs)
+      for (;;) {
+        const st = (await conn.getSignatureStatuses([sig])).value[0];
+        if (st?.err) throw new Error("transaction failed: " + JSON.stringify(st.err));
+        if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return sig;
+        if ((await conn.getBlockHeight("confirmed")) > lastValidBlockHeight) throw new Error("block height exceeded");
+        await sleep(700);
+      }
     } catch (e: any) {
-      if (i < 12) { await sleep(1500); continue; }
+      if (i < 60) { await sleep(Math.min(1500 * (i + 1), 10000)); continue; }
       throw e;
     }
   }
@@ -63,7 +72,9 @@ async function main() {
   console.log("buffer read:", info.data.length, "bytes");
   const data = info.data.subarray(37);
   let fixed = 0;
+  const [wk, wn] = (process.env.WORKER ?? "0/1").split("/").map(Number);
   for (let off = 0; off < so.length; off += CHUNK) {
+    if ((off / CHUNK) % wn !== wk) continue;
     const want = so.subarray(off, Math.min(off + CHUNK, so.length));
     const have = data.subarray(off, off + want.length);
     if (Buffer.compare(Buffer.from(want), Buffer.from(have)) === 0) continue;
@@ -79,6 +90,7 @@ async function main() {
     fixed++;
     console.log("rewrote chunk at", off);
   }
+  if (process.env.WORKER) { console.log(`worker ${process.env.WORKER} done, wrote ${fixed} chunk(s)`); return; }
   const check = (await conn.getAccountInfo(buffer.publicKey, "confirmed"))!.data.subarray(37, 37 + so.length);
   const same = Buffer.compare(Buffer.from(check), Buffer.from(so)) === 0;
   console.log(`fixed ${fixed} chunk(s); buffer identical to the .so: ${same}`);
