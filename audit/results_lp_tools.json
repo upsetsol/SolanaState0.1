@@ -1,0 +1,10 @@
+[
+  {
+    "group": "LP tools rehearsal",
+    "id": "LP.1",
+    "title": "round trip of the LP wallet (add 0.5 SOL, a 0.1 SOL buy happens, remove everything)",
+    "verdict": "INFO",
+    "note": "SOL 5.0000 → 5.0964 (wallet SOL incl. the position rent refund); coins 30000000 → 27497602",
+    "status": ""
+  }
+]
