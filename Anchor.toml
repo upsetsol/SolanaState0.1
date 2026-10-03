@@ -7,7 +7,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-onchain_state_solana = "FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy"
+onchain_state_solana = "3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD"
 
 [provider]
 cluster = "localnet"

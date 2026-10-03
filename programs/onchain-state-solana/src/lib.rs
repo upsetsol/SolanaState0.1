@@ -8,7 +8,7 @@ use anchor_spl::{
     token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
-declare_id!("FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy");
+declare_id!("3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD");
 
 // ============================================================================
 // v4 — pool-fee model. Two different mints now:
