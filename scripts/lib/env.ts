@@ -405,3 +405,32 @@ export async function waitUntilChainTime(connection: Connection, target: number)
 }
 
 export { anchor, PublicKey, SystemProgram };
+
+// ---------------- optional: confirm over plain HTTP (public RPCs rate-limit websockets) ----------------
+// HTTP_CONFIRM=1 makes every provider.sendAndConfirm() poll getSignatureStatuses and re-send with a fresh blockhash when one expires.
+if (process.env.HTTP_CONFIRM === "1") {
+  const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  (anchor.AnchorProvider.prototype as any).sendAndConfirm = async function (this: any, tx: any, signers?: Keypair[], opts?: any) {
+    tx.feePayer = tx.feePayer ?? this.wallet.publicKey;
+    for (let i = 0; ; i++) {
+      try {
+        const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash("confirmed");
+        tx.recentBlockhash = blockhash;
+        tx.signatures = [];
+        (signers ?? []).forEach((k: Keypair) => tx.partialSign(k));
+        const signed = await this.wallet.signTransaction(tx);
+        const sig = await this.connection.sendRawTransaction(signed.serialize(), { skipPreflight: (opts ?? this.opts)?.skipPreflight ?? false, preflightCommitment: "confirmed" });
+        for (;;) {
+          const st = (await this.connection.getSignatureStatuses([sig])).value[0];
+          if (st?.err) throw new Error("Transaction " + sig + " failed: " + JSON.stringify(st.err));
+          if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return sig;
+          if ((await this.connection.getBlockHeight("confirmed")) > lastValidBlockHeight) throw new Error("block height exceeded");
+          await sleepMs(700);
+        }
+      } catch (e: any) {
+        if (i < 6 && /expired|block height exceeded|Blockhash not found/i.test(String(e?.message ?? e))) { await sleepMs(1500); continue; }
+        throw e;
+      }
+    }
+  };
+}

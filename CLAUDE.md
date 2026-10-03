@@ -83,18 +83,16 @@ Test 1 так не исправить (у дева 97,9% выпуска) — э�
   `revoke_mint_authority.ts` (необратимо, `CONFIRM=yes`, `ALSO_METADATA=yes` — ещё и имя/логотип); `launch_check.ts` (только чтение, 11 проверок: у дева 0, пул держит выпуск, право выпуска отозвано, позиция у государства и заблокирована, комиссия 5%/20% Meteora, доля казны 100%).
   Локально: до времени старта покупка отклоняется (`SwapDisabledError`), после — покупки/продажи/сбор в казну работают (казна 4% оборота), чек-лист ALL PASS. Пример диапазона: START_FDV=30 → весь выпуск стоит 30 SOL на старте, выкупить ВСЕ монеты стоило бы ≈3000 SOL.
 
-### ПАУЗА (Роман, 2026-10-02): devnet-обновление до v4.1 загружено на 95% — завтра продолжить
-Буфер на devnet создан и заполнен на **549 из 580 кусков (95%)**: адрес буфера `8faxeSAMdtphdbki3p3UrG73TpLdfoASp3CStB4TwUX1` (залог 2,65 SOL лежит в нём и вернётся при обновлении), ключ буфера — **`~/devnet-buffer-FG7Y.json`** (вне репозитория,
-chmod 600; без него буфер не продолжить). Программа на devnet пока ещё старая v4 (ничего не заменено). Продолжить (скрипт возобновляемый, дописывает недостающие куски, сверяет побайтно, потом обновляет):
-```bash
-cd /Users/romantalanin/Desktop/onchain-state-solana-main
-export ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=~/.config/solana/id.json PROGRAM_ID=FG7YYNJpcUHfHztKVou8yTLhZPntL6iR8fkRocW4oQdy BUFFER_KEYPAIR=~/devnet-buffer-FG7Y.json
-npx ts-node scripts/upgrade_program.ts --upgrade      # публичный devnet режет запросы: при 429 просто запустить ещё раз
-```
-Затем «Test 2» на devnet (с кошелька `A7mn…` на devnet, ≈4,1 SOL минус буфер, который вернётся): `create_mint` (NAME="Test 2" SYMBOL=TEST2 INITIAL_SUPPLY=1000000000) → `initialize` (PARAMS=test) → `setup_milestone_fund` →
-`create_pool` (SINGLE_SIDED=1 TOKEN_AMOUNT=all START_FDV=<SOL> START_IN_SECS=60) → `register_pool` → `revoke_mint_authority` (CONFIRM=yes ALSO_METADATA=yes) → `launch_check` (DEV=<адрес создателя>) → покупки/продажа отдельным кошельком (`pool_swap.ts`) →
-`claim_pool_fees` → `pool_report`. START_FDV для Test 2 Никита ещё не назвал (для devnet-репетиции можно 30). Локальный прогон ровно этих шагов прошёл целиком. Прогон по сети devnet — с публичным RPC без Rust CLI (CLI до devnet не достаёт — только Node-скрипты).
-Улучшения этой сессии в `scripts/upgrade_program.ts`: подтверждение транзакций опросом по HTTP (без websocket, который режется 429), больше повторов, режим параллельных потоков `WORKER=k/n` (не больше 3 потоков на публичном RPC — 6 вызывали лимиты).
+### DEVNET выполнен 2026-10-03: программа обновлена до v4.1 и пройден «Test 2» (дев = 0) — mainnet НЕ трогали
+- **Обновление devnet** (адрес `FG7Y…` тот же): буфер дозаписан (31 кусок), байты программы на devnet == локальная сборка v4.1 (sha256 `563ccd0c…`), tx обновления `5magUhx4…JpEf4`, залог за буфер вернулся (кошелёк 4,10 → 4,098 SOL, только комиссии).
+  Старые devnet-аккаунты `Config` разных эпох (в т.ч. v3-формата) через `.all()` не декодируются — это старый мусор, новые государства не затронуты.
+- **Test 2 на devnet** (монета `AVfVxbBHo28BApqHunWMCymdYBUL8rq3neomshNRJU42`, пул `9UUZhn5rgusmDicv3Pd7xrH82S8qkhen194bMroFQtQP`, оценка на старте START_FDV=30 SOL, диапазон ×10 000, старт торгов через 90 с): create_mint `2Y2poToJ…hLC` →
+  initialize `3zwgZVph…FeYYe` (PARAMS=test) → setup_milestone_fund `4mCpMHci…D4AYa` → create_pool одной стороной (весь выпуск 1 млрд монет, SOL 0) `398DotLj…pvsF` + передача позиции государству `5jMYBCZn…Jdx2` → register_pool `3zySaCL4…rXc3` →
+  revoke (право выпуска + владелец метаданных + метаданные-указатель) `5sdFW6es…BMRA` → `launch_check` **ALL PASS (11/11)**: у создателя 0 монет, в пуле 100% выпуска, права выпуска/заморозки нет, позиция у государства и заблокирована, комиссия 5% плоская, Meteora 20%, доля государства 100%.
+  Покупки отдельным кошельком `GupphDJi…DedF8`: 0,1 SOL `2SdzW6GE…WfKiQ`, 0,5 SOL `2ha3mKCq…nFbmb`, продажа 5 млн монет `3QxA7yMJ…ATcw`; сбор комиссии в казну `55vg5wRj…RG6`: **казна получила 0,030197 SOL = 4,0% оборота** (оборот ≈0,755 SOL, комиссия 0,0377: Meteora 20% = 0,00755, казна 80%).
+  Стоимость всего запуска для создателя ≈0,03 SOL (devnet). Ключи devnet-теста (вне репозитория): `~/test2-mint-devnet.json`, `~/test2-pool-devnet.json`, `~/test2-buyer-devnet.json`.
+- **Что осталось решать (ждём Никиту/Романа):** реальная START_FDV и название/картинка Test 2; mainnet-обновление до v4.1 и mainnet-запуск — только по прямой команде Романа (команды запускает Роман). В `scripts/lib/env.ts` появился режим `HTTP_CONFIRM=1`
+  (подтверждение транзакций опросом по HTTP — для публичных RPC, которые режут websocket).
 
 ## Кто есть кто
 - **Роман** (пользователь): работает **посредником** между агентом и **Никитой** (единственный владелец проекта, «owner»).
