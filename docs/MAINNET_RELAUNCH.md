@@ -1,5 +1,7 @@
 # Mainnet: собрать деньги, закрыть старую программу, развернуть новую и запустить Test 2 (дев = 0)
 
+> **СТАТУС (2026-10-04, вечер): ВЫПОЛНЕНО.** Шаги 1–3 сделаны на mainnet (Роман нажимал, агент сверял по сети), Test 2 запущен и торгуется; идёт проверка голосований (раздел 4). Все адреса и транзакции — `docs/HANDOFF_2026-10-04.md`.
+
 Решение Романа (2026-10-03): Test 1 не нужен, старая программа `FG7Y…` закрывается, новая развёртывается на **новом адресе**.
 Новая программа: **`3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD`** (ключ — `target/deploy/onchain_state_solana-keypair.json`). Старый ключ `FG7Y…` сохранён в `~/FG7Y-program-keypair.OLD.json`.
 Решение Романа (2026-10-04): разворачиваем и запускаем с **НОВОГО кошелька** (дальше `$NEW`): на него собираем всё, что можно вернуть из Test 1, и на него же приходит залог за закрытую старую программу.
@@ -72,3 +74,12 @@ cd /Users/romantalanin/Desktop/onchain-state-solana-main && NAME=test2 SYMBOL=TS
 Проверено на локальном валидаторе с клоном Meteora 2026-10-04 (не devnet, не mainnet): полный запуск за 14 с (ALL PASS), покупка/продажа/сбор комиссии после старта, повторный запуск законченных шагов безвреден, обрыв между созданием пула и передачей позиции → повторный `create_pool` докручивает передачу, `FROM=2` после ошибки, готовый файл ключа монеты. В ходе этого `create_mint.ts` (ключ сохраняется до отправки, подтверждение опросом по HTTP), `create_pool.ts` (файл пула до отправки, возобновление, время цепи через Clock) и `pool_swap.ts` (время цепи через Clock) стали устойчивее к обрывам публичного RPC.
 Ручной вариант (то же по шагам, переменные: `GOVERNANCE_MINT=<адрес монеты>`, `OWNERS_AUTHORITY`, `ADMIN_AUTHORITY`, `PRESIDENT`, `PARAMS=prod`; `PARAMS=test` на mainnet запрещён): `create_mint.ts` → `initialize.ts` → `setup_milestone_fund.ts` → `create_pool.ts` (`SINGLE_SIDED=1 TOKEN_AMOUNT=all START_FDV=10 START_IN_SECS=600`) → `register_pool.ts` → `revoke_mint_authority.ts` (`CONFIRM=yes`) → `launch_check.ts`.
 Стоимость выкупа доли f выпуска ≈ START_FDV·f/(1−f) (+5% комиссии: 1% уходит Meteora, 4% — в казну проекта).
+
+## 4. Проверка голосований на живом государстве (2026-10-04 →)
+Боевые сроки: голосование 1 сутки + ожидание 1 сутки (исполнить можно через 2 суток после открытия). Чтобы проверить как можно больше и быстро — «волны»:
+```bash
+cd /Users/romantalanin/Desktop/onchain-state-solana-main && CONFIRM=yes bash scripts/gov_wave1.sh            # 8 предложений разом: сократить сроки до 5 мин/0/0/1 ч, трата 0,001 SOL, два министра, пополнение фонда вех (запущено 04.10 ≈17:07–17:12 МСК)
+cd /Users/romantalanin/Desktop/onchain-state-solana-main && bash scripts/gov_wave1_execute.sh                  # только статус (кто готов, сколько ждать)
+cd /Users/romantalanin/Desktop/onchain-state-solana-main && CONFIRM=yes bash scripts/gov_wave1_execute.sh      # исполнить всё готовое в правильном порядке (с 06.10 после 17:12:07 МСК)
+```
+`gov_wave1.sh` повторяемый: id предложения запоминается в `~/gov-wave1.state` ДО отправки (`PENDING:<id>`), после обрыва сети недоделанное предложение достраивается (`scripts/finish_proposal.ts`), дубли не создаются. `scripts/gov_status.ts` — статус только чтением. Дальше «волна 2» (короткие сроки): план — `docs/HANDOFF_2026-10-04.md` §7. Отдельные команды (зарплата `claim_salary.ts`, сбор налога `claim_pool_fees.ts`, пауза `set_pause.ts`, `propose_and_vote.ts`, `change_param.ts`, …) запускать с префиксом из §8 того же файла (он не даёт старому окружению терминала помешать).

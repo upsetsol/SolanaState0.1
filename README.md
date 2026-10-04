@@ -202,6 +202,11 @@ programs/onchain-state-solana/src/lib.rs   — весь контракт, оди
 scripts/lib/env.ts                          — общий конфиг + хелперы
 scripts/create_mint.ts                      — создание governance-mint
 scripts/*.ts                                — по инструкции / сценарию
+scripts/deploy_mainnet.ts, launch_test2.sh   — развёртывание программы и запуск «дев = 0» одной командой (возобновляемые)
+scripts/buy_when_open.ts                    — покупка команды в момент открытия торгов
+scripts/gov_wave1.sh, gov_wave1_execute.sh, gov_status.ts, finish_proposal.ts — проверка голосований «волнами» (см. docs/HANDOFF_2026-10-04.md)
+scripts/send_sol.ts, close_program.ts, set_metadata_uri.ts, revoke_metadata.ts — перевод SOL, закрытие программы, метаданные монеты
+docs/HANDOFF_2026-10-04.md                  — полное состояние mainnet, адреса, транзакции, план проверок, грабли
 ```
 
 Типы предложений: 0 SPEND, 1 сменить президента, 2 назначить минфин,
