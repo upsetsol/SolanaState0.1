@@ -101,6 +101,6 @@ START_AT="$(date -r $((T4 + START_IN_SECS)) 2>/dev/null || date -d "@$((T4 + STA
 POOL_ADDR="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).pool)' "$POOL_OUT" 2>/dev/null || echo "?")"
 echo
 echo "LAUNCHED. coin $GOV | pool $POOL_ADDR"
-echo "Trading opens at about $START_AT (the chain clock runs a few seconds behind the wall clock: wait a minute longer before the first buy)."
-echo "A buy of 0.5 SOL (run it after the start):"
-echo "  cd $(pwd) && ANCHOR_PROVIDER_URL=$(echo "$RPC" | mask) ANCHOR_WALLET=$WALLET HTTP_CONFIRM=1 GOVERNANCE_MINT=$GOV SIDE=buy AMOUNT=0.5 npx ts-node scripts/pool_swap.ts"
+echo "Trading opens at about $START_AT (the chain clock runs a few seconds behind the wall clock)."
+echo "To buy the moment trading opens (start it a few minutes BEFORE the opening: it waits and buys by itself; keep ~0.05 SOL for fees):"
+echo "  cd $(pwd) && AMOUNT=<SOL> CONFIRM=yes caffeinate -i npx ts-node scripts/buy_when_open.ts"

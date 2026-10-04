@@ -30,7 +30,7 @@ async function main() {
   const slot = await conn.getSlot();
   const now = await chainNow(conn);
   const q: any = cpAmm.getQuote({
-    inAmount: amountIn, inputTokenMint: inMint, slippage: Number(process.env.SLIPPAGE ?? "5"), poolState: state, currentTime: now, currentSlot: slot,
+    inAmount: amountIn, inputTokenMint: inMint, slippage: Math.round(Number(process.env.SLIPPAGE ?? "5") * 100), /* SLIPPAGE is a percent; the SDK takes basis points */ poolState: state, currentTime: now, currentSlot: slot,
     tokenADecimal: gov.decimals, tokenBDecimal: quote.decimals,
   } as any);
   const tx = await cpAmm.swap({
