@@ -12,6 +12,9 @@
 //   INITIAL_SUPPLY=<ui>         (optional — mint this many tokens to the payer)
 //   OUT=./.mint.json            (optional — where to save the mint keypair)
 //
+// Safe to run again: the key file is written BEFORE the transaction is sent and is the identity of the coin. If OUT already exists the script reuses it:
+// when that coin is already on chain it does nothing (no second coin), when it is not (an interrupted run) it creates it with the same key.
+//
 // After running: `export GOVERNANCE_MINT=<printed address>`
 
 import {
@@ -19,7 +22,6 @@ import {
   Keypair,
   SystemProgram,
   Transaction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
@@ -38,6 +40,17 @@ import { createInitializeInstruction, pack, TokenMetadata } from "@solana/spl-to
 import * as fs from "fs";
 import * as os from "os";
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function retryFetch(input: any, init?: any): Promise<any> {
+  for (let i = 0; ; i++) {
+    try {
+      const r = await fetch(input, { ...(init || {}), signal: AbortSignal.timeout(30000) });
+      if ((r.status === 429 || r.status >= 500) && i < 20) { await sleep(1000 * Math.min(i + 1, 8)); continue; }
+      return r;
+    } catch (e) { if (i >= 20) throw e; await sleep(1000 * Math.min(i + 1, 8)); }
+  }
+}
+
 function loadKeypair(path: string): Keypair {
   const p = path.startsWith("~") ? path.replace("~", os.homedir()) : path;
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8"))));
@@ -50,9 +63,16 @@ async function main() {
   const symbol = process.env.SYMBOL ?? "TEST1";
   const uri = process.env.URI ?? "";
 
-  const connection = new Connection(process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com", "confirmed");
+  const connection = new Connection(process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com", { commitment: "confirmed", fetch: retryFetch as any });
   const payer = loadKeypair(process.env.ANCHOR_WALLET || "~/.config/solana/id.json");
-  const mint = Keypair.generate();
+  const keyFile = outPath.startsWith("~") ? outPath.replace("~", os.homedir()) : outPath;
+  const haveKey = fs.existsSync(keyFile);
+  const mint = haveKey ? loadKeypair(keyFile) : Keypair.generate();
+  if (haveKey && (await connection.getAccountInfo(mint.publicKey, "confirmed"))) {
+    console.log("Mint:    ", mint.publicKey.toBase58(), "(from", keyFile + ") already exists on chain - NOT creating a second coin. Use another OUT=<file> for a new coin.");
+    console.log("\nNext:  export GOVERNANCE_MINT=" + mint.publicKey.toBase58());
+    return;
+  }
 
   const metadata: TokenMetadata = {
     mint: mint.publicKey,
@@ -108,11 +128,26 @@ async function main() {
     console.log("Initial supply:", process.env.INITIAL_SUPPLY, "->", payerAta.toBase58());
   }
 
-  const sig = await sendAndConfirmTransaction(connection, tx, [payer, mint], { commitment: "confirmed" });
+  // save the coin's key FIRST: whatever happens to the transaction, the address can never be lost
+  if (!haveKey) fs.writeFileSync(keyFile, JSON.stringify(Array.from(mint.secretKey)), { mode: 0o600, flag: "wx" });
+  console.log("Mint keypair saved to", keyFile);
+  tx.feePayer = payer.publicKey;
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.sign(payer, mint);
+  const sig = await connection.sendRawTransaction(tx.serialize());
+  // confirm by polling over HTTP (websocket subscriptions get rate-limited on public RPCs)
+  for (;;) {
+    const st = (await connection.getSignatureStatuses([sig])).value[0];
+    if (st?.err) throw new Error("create_mint failed: " + JSON.stringify(st.err));
+    if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) break;
+    if ((await connection.getBlockHeight("confirmed")) > lastValidBlockHeight) {
+      if (await connection.getAccountInfo(mint.publicKey, "confirmed")) break; // it landed after all
+      throw new Error("the transaction did not land (block height exceeded). Nothing was created; run the same command again (the key file " + keyFile + " is reused). tx " + sig);
+    }
+    await sleep(700);
+  }
   console.log("\ncreate_mint tx:", sig);
-
-  fs.writeFileSync(outPath, JSON.stringify(Array.from(mint.secretKey)), { mode: 0o600 });
-  console.log("Mint keypair saved to", outPath);
   console.log("\nNext:  export GOVERNANCE_MINT=" + mint.publicKey.toBase58());
 }
 

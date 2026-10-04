@@ -10,7 +10,7 @@
 import { TOKEN_2022_PROGRAM_ID, getMint } from "@solana/spl-token";
 import BN from "bn.js";
 import { CpAmm, deriveCustomizablePoolAddress } from "@meteora-ag/cp-amm-sdk";
-import { parseUnits, getProvider, GOVERNANCE_MINT, TREASURY_MINT, TREASURY_PROGRAM, TOKEN_PROGRAM } from "./lib/env";
+import { parseUnits, getProvider, chainNow, GOVERNANCE_MINT, TREASURY_MINT, TREASURY_PROGRAM, TOKEN_PROGRAM } from "./lib/env";
 
 async function main() {
   const provider = getProvider();
@@ -28,7 +28,7 @@ async function main() {
   const inMint = side === "buy" ? TREASURY_MINT : GOVERNANCE_MINT;
   const outMint = side === "buy" ? GOVERNANCE_MINT : TREASURY_MINT;
   const slot = await conn.getSlot();
-  const now = (await conn.getBlockTime(slot)) ?? Math.floor(Date.now() / 1000);
+  const now = await chainNow(conn);
   const q: any = cpAmm.getQuote({
     inAmount: amountIn, inputTokenMint: inMint, slippage: Number(process.env.SLIPPAGE ?? "5"), poolState: state, currentTime: now, currentSlot: slot,
     tokenADecimal: gov.decimals, tokenBDecimal: quote.decimals,

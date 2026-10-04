@@ -34,7 +34,7 @@ import {
   deriveCustomizablePoolAddress,
 } from "@meteora-ag/cp-amm-sdk";
 import * as fs from "fs";
-import { parseUnits, getProvider, GOVERNANCE_MINT, TREASURY_MINT, TREASURY_PROGRAM, TOKEN_PROGRAM, configPda, meteoraPositionPda, meteoraPositionNftAccountPda } from "./lib/env";
+import { parseUnits, getProvider, chainNow, GOVERNANCE_MINT, TREASURY_MINT, TREASURY_PROGRAM, TOKEN_PROGRAM, configPda, meteoraPositionPda, meteoraPositionNftAccountPda } from "./lib/env";
 
 /** sqrt(price) as a Q64.64 number (price = raw quote units per raw coin unit), exact integer square root. */
 function sqrtQ64(price: number): BN {
@@ -66,7 +66,20 @@ async function main() {
   const cpAmm = new CpAmm(conn);
   const tokenAMint = GOVERNANCE_MINT, tokenBMint = TREASURY_MINT;
   const poolAddr = deriveCustomizablePoolAddress(tokenAMint, tokenBMint);
-  if (await cpAmm.isPoolExist(poolAddr)) throw new Error("pool already exists: " + poolAddr.toBase58());
+  if (await cpAmm.isPoolExist(poolAddr)) {
+    // an interrupted earlier run: the pool is there, the saved file says which position NFT belongs to it -> finish the hand-over to the state if it is not done yet
+    const saved = fs.existsSync(process.env.POOL_OUT ?? "./.pool.json") ? JSON.parse(fs.readFileSync(process.env.POOL_OUT ?? "./.pool.json", "utf8")) : null;
+    if (!saved || saved.pool !== poolAddr.toBase58() || !saved.positionNft) throw new Error("pool already exists: " + poolAddr.toBase58() + " (and the file " + (process.env.POOL_OUT ?? "./.pool.json") + " does not describe it, so it cannot be resumed)");
+    const nftAcc = meteoraPositionNftAccountPda(new PublicKey(saved.positionNft));
+    const info = await conn.getAccountInfo(nftAcc, "confirmed");
+    if (!info) throw new Error("the position NFT account from the saved file does not exist - this pool is not ours");
+    const holder = new PublicKey(info.data.subarray(32, 64));
+    if (holder.equals(configPda())) { console.log("pool", poolAddr.toBase58(), "already created and handed to the state - nothing to do"); return; }
+    if (!holder.equals(payer.publicKey)) throw new Error("the position NFT account is owned by someone else: " + holder.toBase58());
+    const sigR = await provider.sendAndConfirm(new Transaction().add(createSetAuthorityInstruction(nftAcc, payer.publicKey, AuthorityType.AccountOwner, configPda(), [], TOKEN_2022_PROGRAM_ID)));
+    console.log("resumed: position NFT account now owned by the Config PDA", configPda().toBase58(), "tx", sigR);
+    return;
+  }
 
   // price range: two-sided = the whole range with the price implied by the two amounts; one-sided = [start, start * END_MULT]
   let sqrtMin = MIN_SQRT_PRICE, sqrtMax = MAX_SQRT_PRICE, initSqrt: BN, liquidityDelta: BN;
@@ -98,8 +111,7 @@ async function main() {
   };
   let activationPoint: BN | null = null;
   if (process.env.START_IN_SECS) {
-    const slot = await conn.getSlot();
-    const now = (await conn.getBlockTime(slot)) ?? Math.floor(Date.now() / 1000);
+    const now = await chainNow(conn);
     activationPoint = new BN(now + Number(process.env.START_IN_SECS));
     console.log(`trading opens at unix time ${activationPoint.toString()} (in ${process.env.START_IN_SECS} s)`);
   }
@@ -113,6 +125,9 @@ async function main() {
     isLockLiquidity: true,
   } as any);
   console.log(`Creating pool: ${single ? "ALL coins, no quote asset (one-sided)" : process.env.TOKEN_AMOUNT + " coins + " + process.env.QUOTE_AMOUNT + " of the quote asset"}, fee ${feeBps / 100}% (only in token B), liquidity locked forever`);
+  // save which position NFT belongs to this pool BEFORE sending, so that a crash after the pool is created can still be resumed (re-run this script)
+  const out = process.env.POOL_OUT ?? "./.pool.json";
+  fs.writeFileSync(out, JSON.stringify({ pool: pool.toBase58(), positionNft: positionNft.publicKey.toBase58(), position: meteoraPositionPda(positionNft.publicKey).toBase58() }, null, 2));
   const sig1 = await provider.sendAndConfirm(tx, [positionNft]);
   console.log("pool created:", pool.toBase58(), "tx", sig1);
 
@@ -123,8 +138,6 @@ async function main() {
   );
   console.log("position NFT account now owned by the Config PDA", configPda().toBase58(), "tx", sig2);
 
-  const out = process.env.POOL_OUT ?? "./.pool.json";
-  fs.writeFileSync(out, JSON.stringify({ pool: pool.toBase58(), positionNft: positionNft.publicKey.toBase58(), position: meteoraPositionPda(positionNft.publicKey).toBase58() }, null, 2));
   console.log("saved", out, "\nNext:  npx ts-node scripts/register_pool.ts   (signer = owners_authority)");
 }
 
