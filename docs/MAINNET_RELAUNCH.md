@@ -3,6 +3,7 @@
 Решение Романа (2026-10-03): Test 1 не нужен, старая программа `FG7Y…` закрывается, новая развёртывается на **новом адресе**.
 Новая программа: **`3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD`** (ключ — `target/deploy/onchain_state_solana-keypair.json`). Старый ключ `FG7Y…` сохранён в `~/FG7Y-program-keypair.OLD.json`.
 Решение Романа (2026-10-04): разворачиваем и запускаем с **НОВОГО кошелька** (дальше `$NEW`): на него собираем всё, что можно вернуть из Test 1, и на него же приходит залог за закрытую старую программу.
+Новый кошелёк создан 2026-10-04: адрес **`4pjGakyrTCMzuebbdeUyNesFqJZ5SeaHthmaUAAwv3mz`**, ключ `~/deployer-mainnet.json`; копии всех пяти ключей — в папке `~/KEYS-BACKUP-onchain-state/` (её нужно скопировать на флешку или по AirDrop на iPhone). Роман разрешил: 0,966 SOL с LP-кошелька (деньги Никиты, согласие получено) переводим на новый кошелёк; Helius-ключ не обязателен (как и в devnet-репетиции — на публичном RPC бывают обрывы, но всё возобновляется).
 Все команды ниже запускает Роман в своём терминале; Claude готовит скрипты, проверяет каждый шаг по сети и сверяет цифры. Каждый скрипт без подтверждения только печатает план.
 
 Каждый шаг был прогнан на локальной копии (закрыть → буфер → загрузка → развёртывание → полный e2e) и на devnet с новым адресом; на mainnet ничего ещё не запускалось.
@@ -23,18 +24,14 @@
 Не стоит возвращать: в пуле Test 1 лежит всего 0,0176 SOL (достать можно только продажей монет в пул — ≈0,017 SOL, роняет цену Test 1); аренда пустых счетов монет по 0,0015 SOL; Config/казна Test 1 ≈0,0066 SOL останутся в закрытой программе навсегда.
 
 ## 0. До начала (один раз)
-1. **Новый кошелёк.** Если его ещё нет — создать файл-ключ (напечатает адрес и 12 слов: слова записать на бумагу, файл скопировать вне компьютера):
-```bash
-solana-keygen new --no-bip39-passphrase --outfile ~/deployer-mainnet.json
-solana-keygen pubkey ~/deployer-mainnet.json        # адрес нового кошелька — его (публичный) можно присылать мне
-```
+1. **Новый кошелёк — создан** (`4pjGakyrTCMzuebbdeUyNesFqJZ5SeaHthmaUAAwv3mz`, файл `~/deployer-mainnet.json`, без seed-фразы — сам файл и есть ключ). Если когда-нибудь понадобится новый: `solana-keygen new --no-bip39-passphrase --silent --outfile ~/<имя>.json`, адрес — `solana-keygen pubkey ~/<имя>.json`.
 2. **Копии ключей вне компьютера** (флешка / менеджер паролей): `~/deployer-mainnet.json` (НОВЫЙ кошелёк — он же upgrade authority новой программы), `target/deploy/onchain_state_solana-keypair.json` (ключ новой программы), `~/.config/solana/id.json` (`A7mn…`), `~/FG7Y-program-keypair.OLD.json`, `~/lp-wallet.json`.
 3. **RPC:** публичный mainnet режет запросы. Возьмите свой Helius-ключ из переписки и положите в переменную (не в файл, не в чат):
 ```bash
 cd /Users/romantalanin/Desktop/onchain-state-solana-main
 export ANCHOR_PROVIDER_URL="https://mainnet.helius-rpc.com/?api-key=<КЛЮЧ>"
 export HTTP_CONFIRM=1
-export NEW=<адрес нового кошелька>
+export NEW=4pjGakyrTCMzuebbdeUyNesFqJZ5SeaHthmaUAAwv3mz
 ```
 
 ## 1. Собрать деньги на новый кошелёк и закрыть старую программу (закрытие НЕОБРАТИМО)
