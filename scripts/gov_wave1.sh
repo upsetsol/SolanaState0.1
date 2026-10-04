@@ -63,24 +63,39 @@ if [ "${CONFIRM:-}" != "yes" ]; then
 fi
 
 FAILED=0
-run_prop() { # run_prop KEY "title" command...
-  local key="$1" title="$2"; shift 2
-  if grep -q "^$key=" "$STATE" 2>/dev/null; then echo "--- $title: already created ($(grep "^$key=" "$STATE"))"; return; fi
+count() { COUNT_ONLY=1 npx ts-node scripts/gov_status.ts 2>/dev/null | tail -1; }
+set_state() { # set_state KEY VALUE  (replaces the line of KEY)
+  touch "$STATE"; grep -v "^$1=" "$STATE" > "$STATE.tmp" 2>/dev/null; echo "$1=$2" >> "$STATE.tmp"; mv "$STATE.tmp" "$STATE"
+}
+run_prop() { # run_prop KEY TYPE PARAM_KEY "title" command...
+  local key="$1" type="$2" pk="$3" title="$4"; shift 4
+  local cur; cur="$(grep "^$key=" "$STATE" 2>/dev/null | head -1 | cut -d= -f2)"
+  if [[ "$cur" =~ ^[0-9]+$ ]]; then echo "--- $title: already created (#$cur)"; return; fi
+  local c; c="$(count)"; [[ "$c" =~ ^[0-9]+$ ]] || { echo "!!! cannot read the number of proposals (network?) - run the same command again"; FAILED=1; return; }
+  if [[ "$cur" == PENDING:* ]]; then
+    local pid="${cur#PENDING:}"
+    if [ "$c" -gt "$pid" ]; then   # the proposal WAS created on chain earlier but not completed: complete it, do not create a duplicate
+      echo; echo "=== $title: finishing the proposal #$pid that was created earlier but not completed"
+      if env PROPOSAL_ID="$pid" EXPECT_TYPE="$type" EXPECT_PARAM_KEY="$pk" npx ts-node scripts/finish_proposal.ts 2>&1 | mask | cut -c1-200 | tee /dev/stderr | grep -q "^DONE"; then set_state "$key" "$pid"; else echo "!!! FAILED to finish #$pid - run the same command again"; FAILED=1; fi
+      return
+    fi
+  fi
+  set_state "$key" "PENDING:$c"      # the id this proposal will get; remembered BEFORE sending, so that a dropped connection cannot lead to a duplicate
   echo; echo "=== $title"
   local out rc id
   out="$("$@" 2>&1)"; rc=$?
   echo "$out" | grep -E "create_proposal|snapshot|Error|error" | mask | cut -c1-220
   id="$(echo "$out" | grep -o "id: [0-9]*" | head -1 | grep -o "[0-9]*")"
-  if [ $rc -eq 0 ] && [ -n "$id" ]; then echo "$key=$id" >> "$STATE"; else echo "!!! FAILED: $title — run the same command again (the finished proposals are not repeated)"; FAILED=1; fi
+  if [ $rc -eq 0 ] && [ -n "$id" ]; then set_state "$key" "$id"; else echo "!!! FAILED: $title — run the same command again (it will finish this proposal, not repeat it)"; FAILED=1; fi
 }
-run_prop P_VOTING   "1/8 voting period -> $SHORT_VOTE s"     env PARAM_KEY=0  VALUE=$SHORT_VOTE npx ts-node scripts/change_param.ts
-run_prop P_TIMELOCK "2/8 timelock -> 0"                      env PARAM_KEY=9  VALUE=0           npx ts-node scripts/change_param.ts
-run_prop P_COOLDOWN "3/8 pause between spends -> 0"          env PARAM_KEY=13 VALUE=0           npx ts-node scripts/change_param.ts
-run_prop P_FALLBACK "4/8 president's fallback -> 3600 s"     env PARAM_KEY=14 VALUE=3600        npx ts-node scripts/change_param.ts
-run_prop P_SPEND    "5/8 spend 0.001 SOL to the own wallet"  env AMOUNT=1000000                 npx ts-node scripts/propose_and_vote.ts
-run_prop P_FINANCE  "6/8 appoint the finance minister"       env TARGET="$FIN"                  npx ts-node scripts/appoint_minister.ts
-run_prop P_CULTURE  "7/8 appoint the culture minister"       env TARGET="$CUL"                  npx ts-node scripts/appoint_culture_minister.ts
-run_prop P_DEPOSIT  "8/8 top up the milestone fund 0.005 SOL" env AMOUNT=5000000                npx ts-node scripts/deposit_to_milestone_fund.ts
+run_prop P_VOTING   4 0  "1/8 voting period -> $SHORT_VOTE s"     env PARAM_KEY=0  VALUE=$SHORT_VOTE npx ts-node scripts/change_param.ts
+run_prop P_TIMELOCK 4 9  "2/8 timelock -> 0"                      env PARAM_KEY=9  VALUE=0           npx ts-node scripts/change_param.ts
+run_prop P_COOLDOWN 4 13 "3/8 pause between spends -> 0"          env PARAM_KEY=13 VALUE=0           npx ts-node scripts/change_param.ts
+run_prop P_FALLBACK 4 14 "4/8 president's fallback -> 3600 s"     env PARAM_KEY=14 VALUE=3600        npx ts-node scripts/change_param.ts
+run_prop P_SPEND    0 "" "5/8 spend 0.001 SOL to the own wallet"  env AMOUNT=1000000                 npx ts-node scripts/propose_and_vote.ts
+run_prop P_FINANCE  2 "" "6/8 appoint the finance minister"       env TARGET="$FIN"                  npx ts-node scripts/appoint_minister.ts
+run_prop P_CULTURE  3 "" "7/8 appoint the culture minister"       env TARGET="$CUL"                  npx ts-node scripts/appoint_culture_minister.ts
+run_prop P_DEPOSIT  6 "" "8/8 top up the milestone fund 0.005 SOL" env AMOUNT=5000000                npx ts-node scripts/deposit_to_milestone_fund.ts
 
 echo
 echo "=== state of all proposals (read-only)"

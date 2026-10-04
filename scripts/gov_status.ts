@@ -14,6 +14,7 @@ async function main() {
   const conn = new Connection(process.env.ANCHOR_PROVIDER_URL || "http://127.0.0.1:8899", "confirmed");
   const program = loadProgram(new anchor.AnchorProvider(conn, { publicKey: PublicKey.default, signTransaction: async (t: any) => t, signAllTransactions: async (t: any) => t } as any, {}));
   const c: any = await program.account.config.fetch(configPda());
+  if (process.env.COUNT_ONLY === "1") { console.log(c.proposalCount.toString()); return; }
   const now = await chainNow(conn);
   console.log(`Государство ${configPda().toBase58()} (программа ${PROGRAM_ID.toBase58().slice(0, 6)}…)${c.paused ? "   !!! ПАУЗА ВКЛЮЧЕНА" : ""}`);
   console.log(`Сроки сейчас: голосование ${c.votingPeriodSecs} с, ожидание после голосования ${c.timelockSecs} с, пауза между тратами ${c.spendCooldownSecs} с, запасной исполнитель через ${c.execFallbackSecs} с`);
