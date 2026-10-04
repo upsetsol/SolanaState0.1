@@ -34,7 +34,7 @@ export HTTP_CONFIRM=1
 export NEW=4pjGakyrTCMzuebbdeUyNesFqJZ5SeaHthmaUAAwv3mz
 ```
 
-## 1. Собрать деньги на новый кошелёк и закрыть старую программу (закрытие НЕОБРАТИМО)
+## 1. Собрать деньги на новый кошелёк и закрыть старую программу (закрытие НЕОБРАТИМО) — ВЫПОЛНЕНО 2026-10-04
 ```bash
 # 1a. (только с согласия Никиты) весь SOL с LP-кошелька -> новый кошелёк
 KEYPAIR=~/lp-wallet.json TO=$NEW AMOUNT=all npx ts-node scripts/send_sol.ts              # план: «afterwards: sender 0 SOL, recipient ≈0.966 SOL»
@@ -51,23 +51,15 @@ KEYPAIR=~/.config/solana/id.json TO=$NEW AMOUNT=all CONFIRM=yes npx ts-node scri
 ```
 После этого `FG7Y…` на mainnet мёртв навсегда; пул/казна Test 1 остаются без управления (там копейки). Присылайте мне вывод — я сверю баланс `$NEW` по сети (должно быть ≈3,50 SOL с деньгами LP-кошелька или ≈2,54 без них).
 
-## 2. Новая программа (всё с НОВОГО кошелька)
+## 2. Новая программа (всё с НОВОГО кошелька) — одной командой
+Состояние на 2026-10-04 (проверено по сети): шаги 1a–1c ВЫПОЛНЕНЫ (tx `3Ecrp14g…`, `4nNE28ff…`, `4qYzi3mZ…`, все finalized), на новом кошельке 3,5079 SOL, `FG7Y…` закрыта, `3cbH…` ещё не развёрнута.
 ```bash
-export ANCHOR_WALLET=~/deployer-mainnet.json
-export PROGRAM_ID=3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD
-export BUFFER_KEYPAIR=~/mainnet-buffer-NEW.json
-CONFIRM=yes npx ts-node scripts/make_buffer.ts                    # создаёт буфер (≈2,65 SOL залога, вернутся сами); СКОПИРУЙТЕ ~/mainnet-buffer-NEW.json
-# загрузка 580 кусков: три потока одновременно (больше трёх публичный RPC режет), каждый в своём окне терминала
-# (в каждом окне сначала повторить export-строки выше: ANCHOR_PROVIDER_URL, HTTP_CONFIRM, ANCHOR_WALLET, PROGRAM_ID, BUFFER_KEYPAIR):
-WORKER=0/3 npx ts-node scripts/upgrade_program.ts
-WORKER=1/3 npx ts-node scripts/upgrade_program.ts
-WORKER=2/3 npx ts-node scripts/upgrade_program.ts
-# когда все три напишут «done»: проверка байт в байт (БЕЗ --upgrade)
-npx ts-node scripts/upgrade_program.ts                            # должно быть: «buffer identical to the .so: true»
-npx ts-node scripts/deploy_new_program.ts                         # план: адрес 3cbH…, «byte-identical: true», «authority = payer»
-CONFIRM=yes npx ts-node scripts/deploy_new_program.ts
+cd /Users/romantalanin/Desktop/onchain-state-solana-main && CONFIRM=yes caffeinate -i npx ts-node scripts/deploy_mainnet.ts
 ```
-Если что-то оборвалось — повторите ту же команду (всё возобновляется). Присылайте мне вывод каждого шага: я сверяю по сети (байты программы должны совпасть с `target/deploy/onchain_state_solana.so`, sha256 начинается с `eae9b9ea`).
+Что делает `scripts/deploy_mainnet.ts` (по умолчанию: публичный mainnet RPC, кошелёк `~/deployer-mainnet.json`, буфер `~/mainnet-buffer-NEW.json`): проверяет сборку (sha256 `eae9b9ea…`), ключ программы и баланс (нужно ≈2,671 SOL) → создаёт буфер (≈2,650 SOL, вернутся) → загружает 580 кусков тремя потоками (10–30 минут на публичном RPC) → сверяет побайтно → разворачивает → читает программу из сети и сверяет с сборкой, upgrade authority должен быть новый кошелёк.
+Без `CONFIRM=yes` только проверяет и печатает план. **Можно запускать повторно после любого обрыва** (закрыли терминал, ошибки RPC): готовые шаги пропускаются, буфер переиспользуется (ключ буфера сохраняется ДО отправки транзакции), недостающие куски дописываются. Если публичный RPC душит — `WORKERS=2`, либо свой `ANCHOR_PROVIDER_URL` (Helius).
+Проверено на локальном валидаторе 2026-10-04: полный прогон (145 с), повторный запуск после успеха («already deployed»), убийство посреди загрузки и продолжение (355 из 580 кусков дописано, развёрнуто и сверено), отказ при чужой сборке/нехватке SOL, `make_buffer` с существующим ключом/чужим аккаунтом.
+Ручной вариант (то же по шагам): `make_buffer.ts` → `WORKER=0/3,1/3,2/3 upgrade_program.ts` (в трёх окнах) → `upgrade_program.ts` без WORKER (проверка «identical: true») → `deploy_new_program.ts` с `CONFIRM=yes`; переменные: `ANCHOR_WALLET=~/deployer-mainnet.json PROGRAM_ID=3cbH… BUFFER_KEYPAIR=~/mainnet-buffer-NEW.json ANCHOR_PROVIDER_URL=…`.
 
 ## 3. Test 2: запуск «дев = 0»
 Нужно от Никиты: **название, символ, ссылка на картинку/метаданные (URI), START_FDV (оценка всего выпуска в SOL на старте), во сколько стартуют торги (START_IN_SECS)**, адреса owner/admin/президента (по умолчанию все = новый кошелёк `$NEW`).
