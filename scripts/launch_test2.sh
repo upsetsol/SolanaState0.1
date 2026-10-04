@@ -9,17 +9,19 @@
 # (a second run of create_mint / create_pool recognises its own earlier work and resumes).
 # Step 6 (revoke) is IRREVERSIBLE: nobody can ever print more coins (and, with ALSO_METADATA=yes, change the name/logo).
 #
-# Optional: ANCHOR_PROVIDER_URL (default public mainnet)  ANCHOR_WALLET (default ~/deployer-mainnet.json)  INITIAL_SUPPLY (default 1000000000)
+# Optional: RPC_URL (default public mainnet)  DEPLOYER_KEYPAIR (default ~/deployer-mainnet.json)  INITIAL_SUPPLY (default 1000000000)
 #           END_MULT (default 10000)  OWNERS_AUTHORITY / ADMIN_AUTHORITY / PRESIDENT (default = the deployer wallet)  ALSO_METADATA=yes|no
 #           MINT_OUT / POOL_OUT (key and pool files, default ~/test2-mint-mainnet.json and ~/test2-pool-mainnet.json)
+# On purpose it does NOT read ANCHOR_WALLET / ANCHOR_PROVIDER_URL / PROGRAM_ID from the shell: an old export from earlier sessions (the previous wallet,
+# devnet, the old program) must never decide who launches or on which network.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RPC="${ANCHOR_PROVIDER_URL:-https://api.mainnet-beta.solana.com}"
-WALLET="${ANCHOR_WALLET:-$HOME/deployer-mainnet.json}"
+RPC="${RPC_URL:-https://api.mainnet-beta.solana.com}"
+WALLET="${DEPLOYER_KEYPAIR:-$HOME/deployer-mainnet.json}"
 MINT_OUT="${MINT_OUT:-$HOME/test2-mint-mainnet.json}"
 POOL_OUT="${POOL_OUT:-$HOME/test2-pool-mainnet.json}"
-PROGRAM_ID="${PROGRAM_ID:-3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD}"
+PROGRAM_ID="3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD"
 : "${NAME:?set NAME (the coin name)}"
 : "${SYMBOL:?set SYMBOL (the coin symbol)}"
 : "${START_FDV:?set START_FDV (what the whole supply is worth at the start, in SOL)}"
@@ -30,7 +32,7 @@ SUPPLY="${INITIAL_SUPPLY:-1000000000}"
 FROM="${FROM:-1}"
 
 # the environment of the earlier sessions must not leak into the steps
-unset KEYPAIR TREASURY_MINT FEE_BPS QUOTE_AMOUNT POOL POSITION_NFT WORKER DECIMALS GOVERNANCE_MINT TOKEN_AMOUNT PARAMS DEV CONFIRM_RUN 2>/dev/null || true
+unset KEYPAIR TREASURY_MINT FEE_BPS QUOTE_AMOUNT POOL POSITION_NFT WORKER DECIMALS GOVERNANCE_MINT TOKEN_AMOUNT PARAMS DEV PROGRAM_KEYPAIR BUFFER_KEYPAIR SO OUT 2>/dev/null || true
 
 pubkey() { node -e 'const {Keypair}=require("@solana/web3.js");const fs=require("fs");console.log(Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.argv[1],"utf8")))).publicKey.toBase58())' "$1"; }
 ME="$(pubkey "$WALLET")"

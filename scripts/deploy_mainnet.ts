@@ -4,8 +4,10 @@
 // Without CONFIRM=yes it only checks everything and prints the plan (nothing is sent).
 //
 //   CONFIRM=yes npx ts-node scripts/deploy_mainnet.ts
-// Optional: ANCHOR_PROVIDER_URL (default: the public mainnet RPC)   ANCHOR_WALLET (default ~/deployer-mainnet.json)   BUFFER_KEYPAIR (default ~/mainnet-buffer-NEW.json)
-//           PROGRAM_KEYPAIR (default target/deploy/onchain_state_solana-keypair.json)   SO   EXPECTED_SHA (default eae9b9ea)   WORKERS (default 3; use 2 if the RPC throttles hard)
+// Optional: RPC_URL (default: the public mainnet RPC)   DEPLOYER_KEYPAIR (default ~/deployer-mainnet.json)   WORKERS (default 3; use 2 if the RPC throttles hard)
+//           DEPLOY_BUFFER_FILE (default ~/mainnet-buffer-NEW.json)
+// On purpose it does NOT read ANCHOR_WALLET / ANCHOR_PROVIDER_URL / BUFFER_KEYPAIR / SO / PROGRAM_KEYPAIR from the shell: an old export from earlier sessions
+// (for example the previous wallet) must never decide who deploys or on which network. The build, the program key and the expected hash are fixed below.
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { spawn } from "child_process";
 import * as crypto from "crypto";
@@ -21,12 +23,12 @@ const load = (p: string) => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.
 const sol = (l: number | bigint) => (Number(l) / 1e9).toFixed(4);
 const sha256 = (b: Uint8Array) => crypto.createHash("sha256").update(b).digest("hex");
 
-const RPC = process.env.ANCHOR_PROVIDER_URL ?? "https://api.mainnet-beta.solana.com";
-const WALLET = home(process.env.ANCHOR_WALLET ?? "~/deployer-mainnet.json");
-const BUFFER = home(process.env.BUFFER_KEYPAIR ?? "~/mainnet-buffer-NEW.json");
-const PROGRAM_KEY = home(process.env.PROGRAM_KEYPAIR ?? "target/deploy/onchain_state_solana-keypair.json");
-const SO = process.env.SO ?? "target/deploy/onchain_state_solana.so";
-const EXPECTED_SHA = (process.env.EXPECTED_SHA ?? "eae9b9ea").toLowerCase();
+const RPC = process.env.RPC_URL ?? "https://api.mainnet-beta.solana.com";
+const WALLET = home(process.env.DEPLOYER_KEYPAIR ?? "~/deployer-mainnet.json");
+const BUFFER = home(process.env.DEPLOY_BUFFER_FILE ?? "~/mainnet-buffer-NEW.json");
+const PROGRAM_KEY = "target/deploy/onchain_state_solana-keypair.json";
+const SO = "target/deploy/onchain_state_solana.so";
+const EXPECTED_SHA = "eae9b9ea"; // the verified build (sha256 prefix)
 const WANT_PROGRAM = "3cbHzoeGBV3gbGZk8GnXyRWkVQzwGhAAUPLdbN1dUfZD";
 const WORKERS = Number(process.env.WORKERS ?? 3);
 const CHUNK = 900; // the same as in upgrade_program.ts
