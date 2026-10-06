@@ -18,7 +18,8 @@ mask() { sed -E 's/api-key=[A-Za-z0-9-]+/api-key=***/g'; }
 [ -f "$STATE" ] || { echo "no $STATE - run scripts/gov_wave1.sh first"; exit 1; }
 
 echo "=== status of the proposals"
-npx ts-node scripts/gov_status.ts 2>&1 | cut -c1-200
+STATUS_OUT="$(npx ts-node scripts/gov_status.ts 2>&1)"
+echo "$STATUS_OUT" | cut -c1-200
 if [ "${CONFIRM:-}" != "yes" ]; then echo; echo "STATUS ONLY. To execute everything that is ready: CONFIRM=yes bash scripts/gov_wave1_execute.sh"; exit 0; fi
 
 ok=0; wait=0
@@ -27,6 +28,9 @@ exec_one() { # exec_one KEY "title" [flag]
   id="$(grep "^$key=" "$STATE" | head -1 | cut -d= -f2)"
   [ -n "$id" ] || { echo "--- $title: no such proposal in the state file"; return; }
   if grep -q "^DONE_$key=" "$STATE"; then echo "--- $title (#$id): already executed"; return; fi
+  if echo "$STATUS_OUT" | grep -A1 "^#$id " | grep -q "ИСПОЛНЕНО"; then   # it went through earlier and only the answer was lost (dropped connection): the chain is the truth
+    echo "--- $title (#$id): already executed (seen on the chain)"; echo "DONE_$key=1" >> "$STATE"; return
+  fi
   echo; echo "=== $title (#$id)"
   local out rc
   out="$(npx ts-node scripts/execute_proposal.ts "$id" $flag 2>&1)"; rc=$?
@@ -42,7 +46,10 @@ exec_one() { # exec_one KEY "title" [flag]
       *ProposalRejected*)    echo "!!! the proposal was rejected";;
       *ProposalExpired*)     echo "!!! the proposal expired";;
       *Paused*)              echo "!!! the pause is ON (scripts/set_pause.ts PAUSED=false)";;
-      *) echo "!!! failed: ${why:-unknown}"; echo "$out" | mask | tail -3 | cut -c1-200;;
+      *AlreadyExecuted*)     echo "already executed on the chain (an earlier run went through, only the answer was lost)"; echo "DONE_$key=1" >> "$STATE"; return;;
+      *) if [ -z "$why" ] && echo "$out" | grep -qiE "ECONNRESET|fetch failed|ETIMEDOUT|socket hang up|syscall: 'read'"; then
+           echo "network drop (the public RPC cut the connection) - it may or may not have gone through; run the same command again, it checks the chain first"
+         else echo "!!! failed: ${why:-unknown}"; echo "$out" | mask | tail -3 | cut -c1-200; fi;;
     esac
     wait=$((wait+1))
   fi
