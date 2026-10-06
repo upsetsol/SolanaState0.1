@@ -19,14 +19,14 @@ const names = new Map<string, string>();   // address -> role, so that the list 
 const short = (k: string) => (names.has(k) ? names.get(k) + " " : "") + k.slice(0, 4) + "…" + k.slice(-4);
 const coins = (raw: bigint) => (Number(raw / 1_000_000n) / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 0 });
 const URL = (sig: string) => `https://solscan.io/tx/${sig}`;
-const retry = async <T>(f: () => Promise<T>): Promise<T> => { for (let i = 0; ; i++) { try { return await f(); } catch (e) { if (i >= 5) throw e; await sleep(1200 * (i + 1)); } } };
+const retry = async <T>(f: () => Promise<T>): Promise<T> => { for (let i = 0; ; i++) { try { return await f(); } catch (e) { if (i >= 9) throw e; await sleep(Math.min(1500 * (i + 1), 10000)); } } };   // a long outage of the public RPC must not lose the whole report
 
 type Ev = { kind: string; sig: string; time: number | null | undefined; who: string; detail: string };
 
 async function main() {
   const conn = makeConnection(process.env.ANCHOR_PROVIDER_URL || "http://127.0.0.1:8899", "confirmed");
   const program = loadProgram(new anchor.AnchorProvider(conn, { publicKey: PublicKey.default, signTransaction: async (t: any) => t, signAllTransactions: async (t: any) => t } as any, {}));
-  const cfg: any = await program.account.config.fetch(configPda());
+  const cfg: any = await retry(() => program.account.config.fetch(configPda()));
   const count = Number(cfg.proposalCount.toString());
   const from = Number(process.env.FROM ?? "0");
   names.set(cfg.ownersAuthority.toBase58(), "владелец");
@@ -37,7 +37,7 @@ async function main() {
   for (const [file, role] of [["citizen", "гражданин"], ["president-test", "тестовый президент"]]) {
     try { const b = JSON.parse(fs.readFileSync(path.join(dir, file + ".json"), "utf8")); names.set(new PublicKey(Uint8Array.from(b.slice(32, 64))).toBase58(), role); } catch { /* no such helper */ }
   }
-  const now = await chainNow(conn);
+  const now = await retry(() => chainNow(conn));
   const out: string[] = [];
   const say = (s = "") => { console.log(s); out.push(s); };
   say(`# Голосования государства ${configPda().toBase58()} (монета ${GOVERNANCE_MINT.toBase58()}, программа ${PROGRAM_ID.toBase58()})`);
