@@ -63,20 +63,51 @@ export function loadKeypair(path: string): Keypair {
   );
 }
 
+// ---------------- flaky public RPCs: repeat a request when the connection is cut ----------------
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const TRANSIENT_NETWORK = /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|EPIPE|socket hang up|UND_ERR|other side closed|network|terminated/i;
+export function isTransientNetworkError(e: any): boolean {
+  return TRANSIENT_NETWORK.test([e?.message, e?.cause?.message, e?.cause?.code, e?.code].filter(Boolean).join(" "));
+}
+/**
+ * `fetch` for a Connection. The public mainnet RPC cuts about one request in twenty ("fetch failed", ECONNRESET, HTTP 5xx):
+ * the request is repeated up to 5 times with a growing pause. Safe for every JSON-RPC call: even sendTransaction carries the same signed bytes,
+ * and a transaction can land only once (an "already processed" answer is handled in sendAndConfirm below).
+ */
+export const retryFetch = async (input: any, init?: any): Promise<any> => {
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch(input, init);
+      if (res.status >= 500 && i < 5) { try { await res.arrayBuffer(); } catch { /* drain */ } await sleep(800 * (i + 1)); continue; }
+      return res;
+    } catch (e: any) {
+      if (i >= 5 || !isTransientNetworkError(e)) throw e;
+      await sleep(800 * (i + 1));
+    }
+  }
+};
+/** A Connection that survives cut connections (use instead of `new Connection(url, commitment)`). */
+export function makeConnection(url: string, commitment: "processed" | "confirmed" | "finalized" = "confirmed"): Connection {
+  return new Connection(url, { commitment, fetch: retryFetch });
+}
+
 /** AnchorProvider. With KEYPAIR set (or passed) — signs with that key; else ANCHOR_WALLET. */
 export function getProvider(keypairPath?: string): anchor.AnchorProvider {
   const kp = keypairPath ?? process.env.KEYPAIR;
   if (kp) {
     const wallet = new anchor.Wallet(loadKeypair(kp));
-    const conn = new Connection(
-      process.env.ANCHOR_PROVIDER_URL || "http://localhost:8899",
-      "confirmed"
-    );
+    const conn = makeConnection(process.env.ANCHOR_PROVIDER_URL || "http://localhost:8899", "confirmed");
     const p = new anchor.AnchorProvider(conn, wallet, { commitment: "confirmed" });
     anchor.setProvider(p);
     return p;
   }
-  const p = anchor.AnchorProvider.env();
+  // the same as AnchorProvider.env() (url from ANCHOR_PROVIDER_URL, key from ANCHOR_WALLET), but with the retrying fetch
+  const url = process.env.ANCHOR_PROVIDER_URL;
+  if (!url) throw new Error("ANCHOR_PROVIDER_URL is not defined");
+  const walletPath = process.env.ANCHOR_WALLET;
+  if (!walletPath) throw new Error("ANCHOR_WALLET is not defined");
+  const opts = anchor.AnchorProvider.defaultOptions();
+  const p = new anchor.AnchorProvider(makeConnection(url, opts.commitment as any), new anchor.Wallet(loadKeypair(walletPath)), opts);
   anchor.setProvider(p);
   return p;
 }
@@ -409,7 +440,7 @@ export { anchor, PublicKey, SystemProgram };
 // ---------------- optional: confirm over plain HTTP (public RPCs rate-limit websockets) ----------------
 // HTTP_CONFIRM=1 makes every provider.sendAndConfirm() poll getSignatureStatuses and re-send with a fresh blockhash when one expires.
 if (process.env.HTTP_CONFIRM === "1") {
-  const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const sleepMs = sleep;
   (anchor.AnchorProvider.prototype as any).sendAndConfirm = async function (this: any, tx: any, signers?: Keypair[], opts?: any) {
     tx.feePayer = tx.feePayer ?? this.wallet.publicKey;
     for (let i = 0; ; i++) {
@@ -419,12 +450,29 @@ if (process.env.HTTP_CONFIRM === "1") {
         tx.signatures = [];
         (signers ?? []).forEach((k: Keypair) => tx.partialSign(k));
         const signed = await this.wallet.signTransaction(tx);
-        const sig = await this.connection.sendRawTransaction(signed.serialize(), { skipPreflight: (opts ?? this.opts)?.skipPreflight ?? false, preflightCommitment: "confirmed" });
+        const first = signed.signature ?? (Array.isArray(signed.signatures) ? (signed.signatures[0]?.signature ?? signed.signatures[0]) : null);
+        const localSig: string = first ? anchor.utils.bytes.bs58.encode(first) : "";   // known before sending: lets us follow a transaction whose answer got lost
+        let sig: string;
+        try {
+          sig = await this.connection.sendRawTransaction(signed.serialize(), { skipPreflight: (opts ?? this.opts)?.skipPreflight ?? false, preflightCommitment: "confirmed" });
+        } catch (e: any) {
+          // the first copy may have reached the cluster although its answer was lost: the same bytes sent again are then "already processed" - follow it
+          if (localSig && /already (been )?processed|AlreadyProcessed/i.test(String(e?.message ?? e) + " " + String((e?.logs ?? []).join?.(" ") ?? ""))) sig = localSig;
+          else throw e;
+        }
+        const t0 = Date.now();
         for (;;) {
-          const st = (await this.connection.getSignatureStatuses([sig])).value[0];
+          let st: any = null, height = 0;
+          try {
+            st = (await this.connection.getSignatureStatuses([sig])).value[0];
+            if (!(st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) && !st?.err) height = await this.connection.getBlockHeight("confirmed");
+          } catch (e: any) {
+            if (isTransientNetworkError(e) && Date.now() - t0 < 180_000) { await sleepMs(1500); continue; }   // one failed poll must not abort a sent transaction
+            throw new Error("could not confirm (network): the transaction " + sig + " was sent and may still land - check it on the chain before repeating. " + (e?.message ?? e));
+          }
           if (st?.err) throw new Error("Transaction " + sig + " failed: " + JSON.stringify(st.err));
           if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return sig;
-          if ((await this.connection.getBlockHeight("confirmed")) > lastValidBlockHeight) throw new Error("block height exceeded");
+          if (height > lastValidBlockHeight) throw new Error("block height exceeded");
           await sleepMs(700);
         }
       } catch (e: any) {

@@ -98,5 +98,13 @@ export function resolveParams(connection?: Connection): {
     return { profile: "prod", params: PROD_PARAMS, rpcUrl };
   }
 
-  return { profile: "test", params: TEST_PARAMS, rpcUrl };
+  // Local rehearsals only (never reached on a mainnet RPC): PARAM_OVERRIDES='{"votingPeriodSecs":25,"timelockSecs":0,...}'
+  // overrides single fields of the TEST profile (e.g. to mimic the live state with much shorter windows).
+  let params = TEST_PARAMS;
+  if (process.env.PARAM_OVERRIDES) {
+    const o = JSON.parse(process.env.PARAM_OVERRIDES);
+    for (const k of Object.keys(o)) if (!(k in TEST_PARAMS)) throw new Error(`PARAM_OVERRIDES: unknown field ${k}`);
+    params = { ...TEST_PARAMS, ...o };
+  }
+  return { profile: "test", params, rpcUrl };
 }

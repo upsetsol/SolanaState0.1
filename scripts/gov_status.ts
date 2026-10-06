@@ -2,7 +2,7 @@
 //   GOVERNANCE_MINT=<mint>  ANCHOR_PROVIDER_URL=<rpc>   (the wrappers scripts/gov_wave1*.sh set both)
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
-import { GOVERNANCE_MINT, PROGRAM_ID, configPda, proposalPda, loadProgram, chainNow } from "./lib/env";
+import { GOVERNANCE_MINT, PROGRAM_ID, configPda, proposalPda, loadProgram, chainNow, makeConnection } from "./lib/env";
 
 const TYPES = ["SPEND", "CHANGE_PRESIDENT", "APPOINT_FINANCE_MINISTER", "APPOINT_CULTURE_MINISTER", "CHANGE_PARAM", "CHANGE_OWNERS", "MILESTONE_DEPOSIT"];
 const PARAMS = ["voting_period_secs", "proposal_threshold_bps", "quorum_spend_bps", "quorum_role_bps", "quorum_param_bps", "finance_daily_bps", "finance_weekly_bps", "culture_daily_bps", "culture_weekly_bps", "timelock_secs", "payroll_president_bps", "payroll_finance_bps", "payroll_culture_bps", "spend_cooldown_secs", "exec_fallback_secs"];
@@ -11,7 +11,7 @@ const when = (s: number) => new Date(s * 1000).toLocaleString("ru-RU", { timeZon
 const left = (s: number) => { const x = Math.abs(s); const h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), r = x % 60; return (h ? h + " ч " : "") + (m ? m + " мин " : "") + (!h ? r + " с" : ""); };
 
 async function main() {
-  const conn = new Connection(process.env.ANCHOR_PROVIDER_URL || "http://127.0.0.1:8899", "confirmed");
+  const conn = makeConnection(process.env.ANCHOR_PROVIDER_URL || "http://127.0.0.1:8899", "confirmed");
   const program = loadProgram(new anchor.AnchorProvider(conn, { publicKey: PublicKey.default, signTransaction: async (t: any) => t, signAllTransactions: async (t: any) => t } as any, {}));
   const c: any = await program.account.config.fetch(configPda());
   if (process.env.COUNT_ONLY === "1") { console.log(c.proposalCount.toString()); return; }
