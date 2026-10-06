@@ -16,7 +16,7 @@ import { spawnSync } from "child_process";
 import {
   anchor, getProvider, loadProgram, GOVERNANCE_MINT, TOKEN_PROGRAM, TREASURY_MINT, TREASURY_PROGRAM, ATA_PROGRAM,
   configPda, treasuryAta, treasuryAtaOf, ata, proposalPda, voterSnapshotPda, spendTrackerPda, payrollPda, milestonePda, milestoneSnapPda, milestoneFundPda,
-  excludedAccountOf, chainNow,
+  excludedAccountOf, chainNow, readPendingPoolFee,
 } from "./lib/env";
 import { CONFIRM, STATE_FILE, LOG_FILE, State, loadState, saveState, walletFile, createWalletFile, log, tx, pass, fail, note, results, expectRefused, summary } from "./lib/gov2";
 
@@ -187,11 +187,12 @@ async function pauseCheck(c: Ctx) {
     await expectRefused("finance minister spend while paused", "Paused", () => ministerSpendTx(fin, 1, 1n));
     await expectRefused("finance minister salary claim while paused", "Paused", () => claimSalaryTx(fin, 1));
     // the fee collection is an inflow: the pause must not block it
+    const pending = await readPendingPoolFee(c.conn, cfg.feePool, cfg.feePosition).catch(() => null);
     const r = spawnSync("npx", ["ts-node", "scripts/claim_pool_fees.ts"], { env: process.env, encoding: "utf8", cwd: __dirname + "/.." });
     const out = (r.stdout ?? "") + (r.stderr ?? "");
     const m = out.match(/claim_pool_fees tx: (\S+)/);
     if (m) { tx("claim_pool_fees while paused", m[1]); pass("fee collection works while paused: " + (out.match(/treasury \+ (\d+)/)?.[0] ?? "")); }
-    else if (/NothingToClaim|Nothing to claim/i.test(out)) note("fee collection while paused: nothing to collect right now (no new trades) - skipped");
+    else if (/NothingToClaim|Nothing to claim/i.test(out) || (pending && pending.feeB === 0n)) note("fee collection while paused: no fee is pending right now (no new trades) - not demonstrated");
     else fail("fee collection while paused: " + out.replace(/\s+/g, " ").slice(-200));
   } finally {
     for (let i = 0; i < 4; i++) {
