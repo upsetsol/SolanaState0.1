@@ -1,0 +1,19 @@
+{
+  "name": "onstate-cli",
+  "version": "0.1.0",
+  "description": "Agent-friendly CLI for the On-Chain State governance program on Solana. It reads the chain and builds unsigned transactions; signing is done by the user's Binance Agentic Wallet (`baw`). It never holds keys.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "bin": {
+    "onstate": "bin/onstate.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.95.0"
+  }
+}
