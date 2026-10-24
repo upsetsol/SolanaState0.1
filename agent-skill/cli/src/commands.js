@@ -469,6 +469,20 @@ async function execute(opts, flags) {
   }
 }
 
+const TOKEN_IX_NAMES = { 1: 'InitializeAccount', 3: 'Transfer', 9: 'CloseAccount', 12: 'TransferChecked', 17: 'SyncNative', 18: 'InitializeAccount3' }
+
+/** Plain SPL Token / associated-token instructions often leave no "Instruction:" line in the logs (unwrap is one), so name them from the message. */
+function splInstructionNames(message, keys) {
+  const names = []
+  for (const ix of message.compiledInstructions || []) {
+    const program = keys[ix.programIdIndex]
+    const first = ix.data && ix.data.length ? ix.data[0] : 0
+    if (program.equals(chain.TOKEN_PROGRAM) && TOKEN_IX_NAMES[first]) names.push(TOKEN_IX_NAMES[first])
+    else if (program.equals(spl.ASSOCIATED_TOKEN_PROGRAM_ID)) names.push(first === 1 ? 'CreateIdempotent' : 'Create')
+  }
+  return names
+}
+
 async function txCommand(opts) {
   const sig = opts.signature || opts.hash
   if (!sig) fail('MISSING_ARG', 'tx needs --signature <transaction signature>.')
@@ -497,7 +511,8 @@ async function txCommand(opts) {
   bump(meta.postTokenBalances, 1n)
   bump(meta.preTokenBalances, -1n)
   const tokenChanges = [...idx.values()].filter((c) => c.delta !== 0n).map((c) => ({ mint: c.mint, change: fmtUnits(c.delta, c.decimals) }))
-  const instructions = (meta.logMessages || []).filter((l) => l.startsWith('Program log: Instruction:')).map((l) => l.replace('Program log: Instruction: ', ''))
+  const logged = (meta.logMessages || []).filter((l) => l.startsWith('Program log: Instruction:')).map((l) => l.replace('Program log: Instruction: ', ''))
+  const instructions = logged.length ? logged : splInstructionNames(t.transaction.message, keys)
   const ok = !meta.err
   return {
     success: ok,

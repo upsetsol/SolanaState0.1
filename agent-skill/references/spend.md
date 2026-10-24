@@ -18,4 +18,6 @@ Checked before Binance is asked: the wallet is a minister, the state is not paus
 limit (otherwise `EXCEEDS_DAILY_LIMIT` / `EXCEEDS_WEEKLY_LIMIT` with the amount left).
 
 The recipient receives **wSOL** in their token account. If they have none yet, the transaction creates it and the
-minister's wallet pays its one-off rent (about 0.002 SOL); the preview says so.
+minister's wallet pays its one-off rent (about 0.0015 SOL at today's rates). The preview's `note` says so, with the exact
+amount, only when an account will really be created: if it does not mention one, the recipient's account already exists and no
+rent is paid, so do not warn about rent in that case.
