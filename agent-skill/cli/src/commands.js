@@ -5,14 +5,11 @@
 // user's Binance Agentic Wallet to PREVIEW it. The agent shows the preview to the human; only after an explicit "yes"
 // does `onstate execute` let Binance sign and broadcast.
 
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
 const anchor = require('@coral-xyz/anchor')
 const web3 = require('@solana/web3.js')
 const spl = require('@solana/spl-token')
 const chain = require('./chain')
-const bawCli = require('./baw')
+const { getSigner } = require('./signers')
 const { buildUnsigned, simulate } = require('./build')
 const { CONFIG } = require('./config')
 const { out, fail, CliError, parseArgs, parseUnits, fmtUnits, big, iso, sleep } = require('./util')
@@ -20,7 +17,8 @@ const { out, fail, CliError, parseArgs, parseUnits, fmtUnits, big, iso, sleep } 
 const { PublicKey, SystemProgram } = web3
 const MIN_LAMPORTS = 5_000_000n // ~0.005 SOL: enough for fees plus one-off account rents
 const LOW_SOL_FIX = 'Send about 0.01 SOL to this address (network fees and one-off account rents).'
-const STATE_DIR = path.join(os.homedir(), '.onstate')
+/** The wallet that signs (ONSTATE_SIGNER: baw = Binance, okx = OKX); chosen lazily so a bad value becomes a clean error. */
+const S = () => getSigner()
 
 // ---------------- shared pieces ----------------
 async function context() {
@@ -40,24 +38,20 @@ function toPublicKey(text, what) {
   }
 }
 
-/** The agentic wallet's Solana address (requires a signed-in `baw`). */
+/** The agentic wallet's Solana address (the wallet must be signed in). */
 function agentAddress() {
-  if (bawCli.bawStatus() !== 'CONNECTED') fail('NOT_SIGNED_IN', 'The Agentic Wallet is not signed in. Run `baw auth signin`, scan the QR code with the Binance App and confirm. Then run `onstate preflight`.')
-  return new PublicKey(bawCli.bawAddress())
+  return new PublicKey(S().address())
 }
 
 /** For read-only commands: --address wins, else the agentic wallet if signed in, else null. */
 function optionalAddress(opts) {
   if (opts.address) return toPublicKey(opts.address, '--address')
-  try {
-    return bawCli.bawStatus() === 'CONNECTED' ? new PublicKey(bawCli.bawAddress()) : null
-  } catch {
-    return null
-  }
+  const a = S().optionalAddress()
+  return a ? new PublicKey(a) : null
 }
 
 function summarizePreview(p, extra) {
-  if (!p.success) fail('PREVIEW_REJECTED', 'Binance rejected the preview (its code and message are in `binance`). Tell the user exactly what it says.', { step: extra.step, binance: p.error })
+  if (!p.success) fail('PREVIEW_REJECTED', `${S().label} rejected the preview (its code and message are in \`${S().errorKey}\`). Tell the user exactly what it says.`, { step: extra.step, [S().errorKey]: p.error })
   const d = p.data || {}
   const sim = d.simulationResult || {}
   return {
@@ -73,7 +67,7 @@ function summarizePreview(p, extra) {
   }
 }
 
-/** Build -> dry-run on our RPC -> Binance preview. */
+/** Build -> dry-run on our RPC -> the wallet provider's preview. */
 async function previewAction({ connection, me, instructions, step, extra }) {
   const built = await buildUnsigned(connection, me, instructions)
   const sim = await simulate(connection, built.vtx)
@@ -81,7 +75,7 @@ async function previewAction({ connection, me, instructions, step, extra }) {
     const d = sim.decoded || {}
     fail('SIMULATION_FAILED', d.name ? `The program would refuse this: ${d.name} - ${d.message}` : 'The dry run failed.', { step, simulation: { error: d, logs: sim.logs.slice(-6) } })
   }
-  const p = bawCli.bawPreview({ from: me.toBase58(), unsignedTx: built.unsignedTx })
+  const p = await S().preview({ from: me.toBase58(), built })
   let secondsLeft = null
   try {
     const height = await connection.getBlockHeight('confirmed')
@@ -99,32 +93,11 @@ async function lamportsOf(connection, pk) {
 
 // ---------------- preflight ----------------
 async function preflight() {
-  const issues = []
+  const w = await S().preflight() // wallet-side checks: signed in? address? provider-specific settings
+  const issues = [...w.issues]
   const notes = []
-  let status = 'UNCONNECTED'
-  try {
-    status = bawCli.bawStatus()
-    if (status !== 'CONNECTED') issues.push({ code: 'NOT_SIGNED_IN', fix: 'Run `baw auth signin`, scan the QR code with the Binance App and confirm.' })
-  } catch (e) {
-    if (e instanceof CliError) issues.push({ code: e.code, fix: e.message })
-    else throw e
-  }
-
-  let address = null
-  let settings = null
-  if (status === 'CONNECTED') {
-    try { address = bawCli.bawAddress() } catch (e) { issues.push({ code: e.code || 'NO_SOLANA_ADDRESS', fix: e.message }) }
-    try { settings = bawCli.bawSettings() } catch (e) { issues.push({ code: 'SETTINGS_UNAVAILABLE', fix: e.message }) }
-    if (settings) {
-      const dev = settings.devMode
-      if (!dev || !dev.enabled) {
-        issues.push({ code: 'DEV_MODE_OFF', fix: 'Turn on Developer Mode in the Binance App: Wallet > Agentic Wallet > settings (top-right corner). Choose a small daily limit.' })
-      } else {
-        if (dev.expiresAt && Number(dev.expiresAt) * 1000 < Date.now()) issues.push({ code: 'DEV_MODE_EXPIRED', fix: 'Developer Mode has expired. Turn it on again in the Binance App.' })
-        if (dev.balanceExceeded) issues.push({ code: 'DEV_MODE_BALANCE_EXCEEDED', fix: "The wallet balance is above Developer Mode's daily limit. Raise the limit in the Binance App or move funds out of the Agentic Wallet." })
-      }
-    }
-  }
+  const status = w.status
+  const address = w.address
 
   const { connection, program } = await context()
   let cfg = null
@@ -151,11 +124,12 @@ async function preflight() {
 
   return {
     success: issues.length === 0,
+    signer: S().name,
     status,
     address,
     solBalance: sol,
     role,
-    devMode: settings && settings.devMode ? { enabled: !!settings.devMode.enabled, expiresAt: iso(settings.devMode.expiresAt), dailyLimit: settings.devMode.dailyLimit } : null,
+    wallet: w.wallet,
     state: { program: chain.PROGRAM_ID.toBase58(), governanceMint: chain.GOV_MINT.toBase58(), found: !!cfg },
     notes,
     issues,
@@ -459,34 +433,29 @@ async function unwrap() {
 }
 
 // ---------------- execute / await-approval / tx ----------------
-async function newestConfirmedHash() {
-  try {
-    const r = bawCli.bawTxHistory('confirmed', '3')
-    const list = r && r.success && r.data && r.data.transactions
-    return list && list.length ? list[0].txHash : null
-  } catch {
-    return null
-  }
-}
-
-async function execute(opts) {
+async function execute(opts, flags) {
   const id = opts['request-id']
   if (!id) fail('MISSING_ARG', 'execute needs --request-id <id> from a preview the user has already seen and confirmed.')
-  const before = await newestConfirmedHash()
-  const r = bawCli.bawExecute(id)
+  const { connection } = await context()
+  const r = await S().execute(id, { force: flags.has('force'), connection })
   if (!r.success) {
     const text = JSON.stringify(r.error || {})
     const hint = /expire|blockhash|not found/i.test(text) ? 'The preview (or the transaction in it) has expired. Run the original command again to get a fresh preview, show it to the user and ask for confirmation again.' : undefined
-    fail('EXECUTE_FAILED', 'Binance did not execute the request (its code and message are in `binance`).', { binance: r.error, hint })
+    fail('EXECUTE_FAILED', `${S().label} did not execute the request (its code and message are in \`${S().errorKey}\`).`, { [S().errorKey]: r.error, hint })
   }
   const d = r.data || {}
-  const pending = d.status === 'PENDING_CONFIRMATION'
-  if (pending) {
-    try {
-      fs.mkdirSync(STATE_DIR, { recursive: true })
-      fs.writeFileSync(path.join(STATE_DIR, 'pending.json'), JSON.stringify({ requestId: id, newestHashBefore: before, at: Date.now() }))
-    } catch { /* best effort */ }
+  if (d.status === 'NEEDS_CONFIRMATION') {
+    // the wallet provider wants an extra confirmation from the human: show `message`, and only on a clear yes repeat with --force
+    return {
+      success: true,
+      status: d.status,
+      needsConfirmation: true,
+      message: d.message,
+      txHash: null,
+      next: `Show \`message\` to the user. Only if they clearly confirm, run: onstate execute --request-id ${id} --force`,
+    }
   }
+  const pending = d.status === 'PENDING_CONFIRMATION'
   return {
     success: true,
     status: d.status,
@@ -496,26 +465,6 @@ async function execute(opts) {
     next: pending
       ? 'Tell the user to approve the transaction in the Binance App (Wallet > Agentic Wallet), then run `onstate await-approval`. Do NOT run execute again for this request.'
       : d.txHash ? `onstate tx --signature ${d.txHash}` : undefined,
-  }
-}
-
-async function awaitApproval(opts) {
-  const timeout = Math.max(10, Math.min(600, Number(opts.timeout || 240))) * 1000
-  let before = null
-  try { before = JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'pending.json'), 'utf8')).newestHashBefore } catch { /* no record */ }
-  const start = Date.now()
-  let unlockedAt = 0
-  for (;;) {
-    const lock = bawCli.bawTxLock()
-    const state = lock && lock.success && lock.data && lock.data.status
-    const newest = await newestConfirmedHash()
-    if (newest && newest !== before) return { success: true, txHash: newest, next: `onstate tx --signature ${newest}` }
-    if (state === 'UNLOCKED') {
-      unlockedAt = unlockedAt || Date.now()
-      if (Date.now() - unlockedAt > 15000) fail('NOT_APPROVED_OR_EXPIRED', 'The wallet is unlocked but no new transaction appeared: the request was rejected or expired. Run the original command again if the user still wants it.')
-    }
-    if (Date.now() - start > timeout) fail('TIMEOUT', 'No approval seen yet. Ask the user whether they approved it in the Binance App.')
-    await sleep(3000)
   }
 }
 
@@ -564,9 +513,9 @@ async function txCommand(opts) {
 }
 
 // ---------------- dispatcher ----------------
-const HELP = `onstate - agent CLI for an On-Chain State on Solana (signing is done by the Binance Agentic Wallet via \`baw\`)
+const HELP = `onstate - agent CLI for an On-Chain State on Solana (signing is done by the user's agent wallet: Binance via \`baw\` or OKX via \`onchainos\`)
 
-  onstate preflight                          is everything ready? (signed in, Developer Mode, SOL, role)
+  onstate preflight                          is everything ready? (wallet signed in, wallet settings, SOL, role)
   onstate status                             the state: roles, rules, treasury, proposals (no wallet needed)
   onstate me [--address <wallet>]            my role, salary and spend limits, coin balance
   onstate proposals [--limit 10]             latest proposals with stage, votes and whether I can vote
@@ -575,11 +524,13 @@ const HELP = `onstate - agent CLI for an On-Chain State on Solana (signing is do
                                              preview: minister spends treasury money without a vote (limits apply)
   onstate vote --proposal <id> (--yes | --no)  preview: cast my vote
   onstate unwrap                             preview: turn my wSOL into plain SOL
-  onstate execute --request-id <id>          sign and send a previewed action (ONLY after the user said yes)
-  onstate await-approval [--timeout 240]     after execute returned pendingConfirmation: wait for the Binance App approval
+  onstate execute --request-id <id> [--force]  sign and send a previewed action (ONLY after the user said yes; --force only after
+                                             a needsConfirmation answer that the user confirmed)
+  onstate await-approval [--timeout 240]     (Binance only) after execute returned pendingConfirmation: wait for the App approval
   onstate tx --signature <sig>               wait for a transaction and explain what it did
 
-env: ONSTATE_RPC_URL, ONSTATE_MINT (default: ${CONFIG.mint}), ONSTATE_PROGRAM, ONSTATE_BAW_CHAIN_ID (default ${CONFIG.chainId}), ONSTATE_TX_FORMAT`
+env: ONSTATE_RPC_URL, ONSTATE_MINT (default: ${CONFIG.mint}), ONSTATE_PROGRAM, ONSTATE_SIGNER (baw = Binance, okx = OKX; now: ${CONFIG.signer}),
+     ONSTATE_OKX_BIN, ONSTATE_BAW_CHAIN_ID (default ${CONFIG.chainId}), ONSTATE_TX_FORMAT`
 
 async function run(argv) {
   const { cmd, opts, flags } = parseArgs(argv)
@@ -594,8 +545,8 @@ async function run(argv) {
       case 'spend': result = await spend(opts); break
       case 'vote': result = await vote(opts, flags); break
       case 'unwrap': result = await unwrap(); break
-      case 'execute': result = await execute(opts); break
-      case 'await-approval': result = await awaitApproval(opts); break
+      case 'execute': result = await execute(opts, flags); break
+      case 'await-approval': result = await S().awaitApproval(opts); break
       case 'tx': result = await txCommand(opts); break
       default:
         console.log(HELP)

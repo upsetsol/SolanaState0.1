@@ -101,4 +101,8 @@ expect "ALREADY DONE" appoint_yes execute culture "$OUTSIDER"
 ROLE="$(ONSTATE_RPC_URL="$RPC" ONSTATE_MINT="$MINT" node "$HERE/../cli/bin/onstate.js" status | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).roles.cultureMinister))')"
 [ "$ROLE" = "$OUTSIDER" ] || { echo "FAIL: culture minister is $ROLE, expected $OUTSIDER"; exit 1; }
 echo "  ok: onstate status shows the new culture minister"
+
+echo "== OKX signer (fake onchainos): the wallet that was just appointed culture minister acts as the OKX wallet"
+E2E_WORK="$WORK" E2E_RPC="$RPC" E2E_MINT="$MINT" E2E_OWNER="$OWNER" E2E_AGENT="$AGENT" E2E_OUTSIDER="$OUTSIDER" \
+  node "$HERE/e2e-okx.js"
 echo "ALL LOCAL CHECKS PASSED"
