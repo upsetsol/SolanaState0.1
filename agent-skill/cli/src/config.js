@@ -6,7 +6,8 @@
 //   ONSTATE_MINT          governance coin of the state to work with (default: Test 2)
 //   ONSTATE_PROGRAM       program id (default: the address inside the bundled IDL)
 //   ONSTATE_BAW_CHAIN_ID  Binance chain id used for `baw` calls (default CT_501 = Solana)
-//   ONSTATE_SIGNER        which wallet signs: "baw" (Binance Agentic Wallet, default) or "okx" (OKX Agentic Wallet)
+//   ONSTATE_SIGNER        which wallet signs: "auto" (default: the first one that is installed AND signed in - OKX, then Binance),
+//                         "okx" (OKX Agentic Wallet, CLI `onchainos`) or "baw" (Binance Agentic Wallet, CLI `baw`)
 //   ONSTATE_OKX_BIN       path of the OKX CLI `onchainos` (default: `onchainos` from PATH)
 //   ONSTATE_TX_FORMAT     "tx" (default: serialized transaction with empty signature slots) or "message"
 //                         (only the message bytes). Only change it if the wallet provider rejects the default format.
@@ -21,7 +22,7 @@ const CONFIG = {
   program: process.env.ONSTATE_PROGRAM || IDL.address,
   chainId: process.env.ONSTATE_BAW_CHAIN_ID || 'CT_501',
   txFormat: (process.env.ONSTATE_TX_FORMAT || 'tx').toLowerCase(),
-  signer: (process.env.ONSTATE_SIGNER || 'baw').toLowerCase(),
+  signer: (process.env.ONSTATE_SIGNER || 'auto').toLowerCase(),
   okxBin: process.env.ONSTATE_OKX_BIN || 'onchainos',
 }
 

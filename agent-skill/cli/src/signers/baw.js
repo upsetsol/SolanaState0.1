@@ -27,6 +27,11 @@ module.exports = {
   /** the key under which the wallet provider's own error is passed through in our JSON errors */
   errorKey: 'binance',
 
+  /** For auto-detection: 'missing' (CLI not installed - throws), 'installed' (not signed in) or 'ready'. */
+  quickState() {
+    return bawCli.bawStatus() === 'CONNECTED' ? 'ready' : 'installed'
+  },
+
   /** The wallet's Solana address, or null (read-only commands may work without a wallet). */
   optionalAddress() {
     try {

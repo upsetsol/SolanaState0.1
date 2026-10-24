@@ -29,6 +29,7 @@ function env(extra = {}) {
     HOME: path.join(WORK, 'home'),
     ONSTATE_RPC_URL: RPC,
     ONSTATE_MINT: MINT,
+    ONSTATE_SIGNER: 'baw',
     FAKE_BAW_KEYPAIR: path.join(WORK, 'agent.json'),
     FAKE_BAW_RPC: RPC,
     FAKE_BAW_DIR: path.join(WORK, 'fake-baw'),

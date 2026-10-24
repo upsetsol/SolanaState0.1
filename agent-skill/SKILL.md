@@ -27,8 +27,19 @@ agent wallet**: the **OKX Agentic Wallet** (CLI `onchainos`) or the **Binance Ag
 The `onstate` CLI reads the chain and builds **unsigned** Solana transactions. All signing is done by the user's agent
 wallet (its key lives in the provider's secure enclave / MPC). The CLI never sees a key, and neither do you.
 
-Which wallet signs is set by `ONSTATE_SIGNER`: `okx` or `baw` (default `baw`). If the user has not said which one they
-use, run `onstate preflight` with each (or ask). The commands below are the same for both.
+Which wallet signs is chosen automatically: the first wallet CLI that is installed **and** signed in (OKX, then Binance).
+`onstate preflight` shows it as `signer`. The user can force one with `ONSTATE_SIGNER=okx` or `baw`. The commands below are
+the same for both. Answer in the language the user writes in; amounts in SOL, never lamports.
+
+## The usual flow ("claim my salary")
+
+1. `onstate preflight`. If `issues` is not empty, tell the user what is missing and the `fix`, then stop and let them do it.
+2. If `role` is null the wallet holds no role, so there is no salary to claim: say so, and that roles are given by a vote.
+3. `onstate claim-salary` (preview). Tell the user, in plain words: who gets what, the expected amount, any one-off rent, any
+   `risks`, and ask a clear yes/no question. Do not run anything else yet.
+4. Only after an explicit "yes" in the user's own message: `onstate execute --request-id <id>`, then `onstate tx --signature <txHash>`.
+5. Report the result in plain words (what arrived, the fee, the explorer link), and offer `onstate unwrap` (wSOL -> SOL).
+6. If it is refused (for example `SALARY_TOO_SOON`), explain the reason and when it will work; do not try to work around it.
 
 The default state is a **test state with tiny amounts** (fractions of one SOL). Say so if the user seems to expect real money.
 

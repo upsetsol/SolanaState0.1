@@ -61,6 +61,13 @@ module.exports = {
   label: 'OKX Agentic Wallet',
   errorKey: 'okx',
 
+  /** For auto-detection: 'missing' (CLI not installed - throws), 'installed' (not signed in) or 'ready'. */
+  quickState() {
+    run(['--version']) // throws OKX_NOT_INSTALLED when the binary is not there
+    const st = walletStatus()
+    return st && st.loggedIn ? 'ready' : 'installed'
+  },
+
   optionalAddress() {
     try {
       const st = walletStatus()

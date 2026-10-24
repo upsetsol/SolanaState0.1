@@ -76,7 +76,9 @@ VOTE_ID="$(VOTERS="$OWNER,$AGENT" ts agent-skill/test/open-proposal.ts 2>"$WORK/
 echo "proposal $VOTE_ID is open for voting"
 
 ln -sf "$HERE/fake-baw.js" "$WORK/bin/baw"
-chmod +x "$HERE/fake-baw.js"
+mkdir -p "$WORK/bin-okx"
+ln -sf "$HERE/fake-onchainos.js" "$WORK/bin-okx/onchainos"
+chmod +x "$HERE/fake-baw.js" "$HERE/fake-onchainos.js"
 
 echo "== CLI tests"
 E2E_WORK="$WORK" E2E_RPC="$RPC" E2E_MINT="$MINT" E2E_OWNER="$OWNER" E2E_AGENT="$AGENT" E2E_OUTSIDER="$OUTSIDER" E2E_VOTE_PROPOSAL="$VOTE_ID" \

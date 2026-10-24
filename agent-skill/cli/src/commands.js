@@ -125,6 +125,7 @@ async function preflight() {
   return {
     success: issues.length === 0,
     signer: S().name,
+    signerChosenBy: S().chosenBy,
     status,
     address,
     solBalance: sol,
@@ -529,7 +530,7 @@ const HELP = `onstate - agent CLI for an On-Chain State on Solana (signing is do
   onstate await-approval [--timeout 240]     (Binance only) after execute returned pendingConfirmation: wait for the App approval
   onstate tx --signature <sig>               wait for a transaction and explain what it did
 
-env: ONSTATE_RPC_URL, ONSTATE_MINT (default: ${CONFIG.mint}), ONSTATE_PROGRAM, ONSTATE_SIGNER (baw = Binance, okx = OKX; now: ${CONFIG.signer}),
+env: ONSTATE_RPC_URL, ONSTATE_MINT (default: ${CONFIG.mint}), ONSTATE_PROGRAM, ONSTATE_SIGNER (auto = the first installed and signed-in wallet, okx, baw; now: ${CONFIG.signer}),
      ONSTATE_OKX_BIN, ONSTATE_BAW_CHAIN_ID (default ${CONFIG.chainId}), ONSTATE_TX_FORMAT`
 
 async function run(argv) {

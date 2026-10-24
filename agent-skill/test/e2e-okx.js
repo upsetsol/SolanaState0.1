@@ -186,6 +186,54 @@ async function main() {
     assert.ok((await connection.getBalance(new web3.PublicKey(OKX_WALLET))) > before)
   })
 
+  console.log('--- automatic wallet choice (ONSTATE_SIGNER not set) ---')
+  const BIN_BAW = path.join(WORK, 'bin') // has `baw` -> fake-baw
+  const BIN_OKX = path.join(WORK, 'bin-okx') // has `onchainos` -> fake-onchainos
+  const SYSTEM = path.dirname(process.execPath) + path.delimiter + '/usr/bin' + path.delimiter + '/bin'
+  function autoCli(args, dirs, extra = {}) {
+    const e = env({ PATH: [...dirs, SYSTEM].join(path.delimiter), FAKE_BAW_KEYPAIR: path.join(WORK, 'agent.json'), FAKE_BAW_RPC: RPC, FAKE_BAW_DIR: path.join(WORK, 'fake-baw-auto'), ...extra })
+    if (!extra.ONSTATE_SIGNER) delete e.ONSTATE_SIGNER // a test may force one on purpose
+    delete e.ONSTATE_OKX_BIN
+    const r = spawnSync('node', [CLI, ...args], { env: e, encoding: 'utf8', timeout: 150000 })
+    let json = null
+    try { json = JSON.parse(r.stdout) } catch { /* not json */ }
+    return { code: r.status, json, stdout: r.stdout, stderr: r.stderr }
+  }
+  await test('both wallets installed and signed in: OKX is chosen automatically', () => {
+    const r = autoCli(['preflight'], [BIN_OKX, BIN_BAW])
+    assert.equal(r.json.signer, 'okx')
+    assert.equal(r.json.signerChosenBy, 'auto-detected')
+    assert.equal(r.json.address, OKX_WALLET)
+  })
+  await test('OKX not signed in but Binance is: Binance is chosen', () => {
+    const r = autoCli(['preflight'], [BIN_OKX, BIN_BAW], { FAKE_OKX_LOGGED_IN: '0' })
+    assert.equal(r.json.signer, 'baw')
+    assert.equal(r.json.address, AGENT)
+  })
+  await test('only one wallet installed: that one is chosen', () => {
+    assert.equal(autoCli(['preflight'], [BIN_OKX]).json.signer, 'okx')
+    assert.equal(autoCli(['preflight'], [BIN_BAW]).json.signer, 'baw')
+  })
+  await test('both installed, none signed in: OKX is chosen and preflight says how to sign in', () => {
+    const r = autoCli(['preflight'], [BIN_OKX, BIN_BAW], { FAKE_OKX_LOGGED_IN: '0', FAKE_BAW_STATUS: 'UNCONNECTED' })
+    assert.equal(r.json.signer, 'okx')
+    assert.ok(r.json.issues.map((i) => i.code).includes('NOT_SIGNED_IN'))
+  })
+  await test('no wallet CLI at all: clear instructions, and read-only commands still work', () => {
+    const r = autoCli(['preflight'], [])
+    assert.equal(r.json.signer, 'none')
+    assert.equal(r.json.success, false)
+    assert.ok(r.json.issues.map((i) => i.code).includes('NO_WALLET_CLI'))
+    assert.match(r.json.issues[0].fix, /onchainos/)
+    refused(autoCli(['claim-salary'], []), 'NO_WALLET_CLI', 'claim without a wallet')
+    ok(autoCli(['status'], []), 'status needs no wallet')
+  })
+  await test('ONSTATE_SIGNER=baw forces Binance even when only OKX is installed', () => {
+    const r = autoCli(['preflight'], [BIN_OKX], { ONSTATE_SIGNER: 'baw' })
+    assert.equal(r.json.signer, 'baw')
+    assert.ok(r.json.issues.map((i) => i.code).includes('BAW_NOT_INSTALLED'))
+  })
+
   const failed = results.filter((r) => !r.ok)
   console.log(`\n${results.length - failed.length}/${results.length} passed (OKX signer)`)
   process.exit(failed.length ? 1 : 0)
