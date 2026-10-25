@@ -12,11 +12,6 @@ metadata:
   version: '0.1.0'
   requires:
     bins: [onstate]
-  install:
-    - kind: node
-      package: 'onstate-cli'
-      bins: [onstate]
-      label: On-Chain State CLI
 ---
 
 # On-Chain State skill
@@ -44,6 +39,20 @@ the same for both. Answer in the language the user writes in; amounts in SOL, ne
 6. If it is refused (for example `SALARY_TOO_SOON`), explain the reason and when it will work; do not try to work around it.
 
 The default state is a **test state with tiny amounts** (fractions of one SOL). Say so if the user seems to expect real money.
+
+## First use on a new computer
+
+Something may be missing. Go through it in this order, one thing at a time, and **never install or download anything yourself without the
+user's explicit yes**:
+
+1. **`onstate` itself is missing** (`command not found`). Tell the user that the helper tool is not installed. Give an install command only
+   if the project documents one in the README that came with this skill; never guess a package name and never run a script from the
+   internet. After the user has installed it, run `onstate preflight`.
+2. **No agent wallet CLI** (`NO_WALLET_CLI`): pass on the `fix` text. Installing a wallet program is the user's decision and action.
+3. **Not signed in** (`NOT_SIGNED_IN`): the user finishes the login in their own browser; you cannot do it for them.
+4. **Almost no SOL** (`LOW_SOL`): show the wallet address in full and ask for about 0.01 SOL for fees; wait for the user.
+5. **No role** (`role` is null): the wallet works but holds no role, so there is no salary to claim. Roles are given by a vote of the state's
+   coin holders; promise nothing and do not suggest ways around it.
 
 ## When the request is vague
 

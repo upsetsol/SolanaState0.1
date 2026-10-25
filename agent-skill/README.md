@@ -81,14 +81,19 @@ with a local key. They do **not** reproduce the providers' real risk engines, bl
 
 ## Verification status
 
-- Local, fake wallets: all green (`run-local.sh`).
-- OKX, live on mainnet (Test 2): `preflight`, `me` and the `claim-salary` preview work, and OKX's server parses our transaction
-  (its own simulation and risk scan accept it). The first live `execute` is the remaining check (see CLAUDE.md, item 10).
+- Local, fake wallets: all green (`test/run-local.sh`: Binance 20/20, OKX 17/17, the appointment script).
+- OKX, live on mainnet (Test 2, 24-25 Oct 2026): `claim-salary`, `spend`, `unwrap` and `vote` were each executed once from a fresh Claude Code
+  session ("type the request, read the preview, say yes") and checked on chain; short or vague requests ("claim my salary", "vote") work;
+  a second claim inside 24 h is refused without any workaround.
+- Prompt injection: `test/redteam/` (a real session against proposals with planted instructions; round 1 passed, see `RESULTS-2026-10-25.md`).
+- New computer: `test/zero-state/` (what the agent says when `onstate`, the wallet CLI, the login or the SOL is missing).
 - Binance: Binance's documentation says external signing supports Solana (`--unsignedTx`, base64), but no live try was possible.
 
 ## Before publishing
 
 - Publish from a neutral GitHub account in its own public repository (no personal names, paths or emails in files or history).
 - Pick a licence (the code here is written fresh; nothing is copied from third-party skills).
-- Replace the `install:` entry for `onstate-cli` in `SKILL.md` with the real package source.
+- **Claim the npm name `onstate-cli` with a neutral npm account first** (it is free today; whoever registers it controls what
+  `npm i -g onstate-cli` installs), then put an `install:` entry back into the `metadata` of `SKILL.md` (it was removed on purpose).
 - Keep `cli/idl/onchain_state_solana.json` in sync with the deployed program (`idl/` in the main repository).
+- Run the red-team lab and the zero-state kit once more with the final text of `SKILL.md`.
