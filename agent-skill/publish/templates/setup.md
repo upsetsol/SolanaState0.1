@@ -11,13 +11,21 @@ Install only from the sources named here; never guess a package name and never p
 npm install -g github:{{OWNER}}/{{REPO}}
 ```
 
+If it stops with `EACCES` (permission denied; common on macOS), the user can give npm a folder of their own, open a new terminal window and repeat:
+
+```
+npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+```
+
 Check it with `onstate --version`, then `onstate preflight` (it also lists what else is missing).
 
 ## 2. An agent wallet (one of the two)
 
 - **OKX Agentic Wallet:** the user downloads the `onchainos` release binary for their system from
-  https://github.com/okx/onchainos-skills/releases, verifies its checksum against `checksums.txt` on the same page, makes it executable and puts
-  it on the PATH. Then `onchainos wallet login`; the user finishes the login in their own browser and runs the `completeLogin` command it prints.
+  https://github.com/okx/onchainos-skills/releases, verifies its checksum against `checksums.txt` on the same page (`shasum -a 256 <file>`), makes
+  it executable (`chmod +x`) and puts it on the PATH. Then `onchainos wallet login`; the user finishes the login in their own browser and runs the
+  `completeLogin` command it prints.
   Limits can be set at https://web3.okx.com/portfolio/agentic-wallet-policy.
 - **Binance Agentic Wallet:** `npm install -g @binance/agentic-wallet`, then `baw auth signin` and a QR scan in the Binance app; Developer Mode with a
   small daily limit must be on in the app.

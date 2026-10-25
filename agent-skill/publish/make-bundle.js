@@ -124,7 +124,8 @@ for (const f of files) {
   const text = fs.readFileSync(f, 'utf8')
   const rules = path.basename(f) === 'package-lock.json' ? FORBIDDEN.filter((rx) => /Users|home|C:|Desktop|onchain-state-solana-main|SolanaState|\\\{/.test(rx.source)) : FORBIDDEN
   text.split('\n').forEach((line, i) => {
-    for (const rx of rules) if (rx.test(line)) problems.push(`${path.relative(OUT, f)}:${i + 1} matches ${rx}: ${line.trim().slice(0, 110)}`)
+    const checked = line.split(`${OWNER}/${REPO}`).join('OWNER/REPO') // the repository coordinates given on the command line are intentional
+    for (const rx of rules) if (rx.test(checked)) problems.push(`${path.relative(OUT, f)}:${i + 1} matches ${rx}: ${line.trim().slice(0, 110)}`)
   })
   if (f.endsWith('.js')) {
     try { execFileSync(process.execPath, ['--check', f], { stdio: 'pipe' }) } catch (e) { problems.push(`${path.relative(OUT, f)}: does not parse: ${String(e.stderr || e.message).split('\n')[0]}`) }

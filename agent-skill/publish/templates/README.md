@@ -28,7 +28,7 @@ The on-chain program itself is not part of this repository; this is the agent si
 
 ## Install
 
-You need Node.js 18+, an agent wallet (below) and an agent that supports skills.
+You need Node.js 18+ (<https://nodejs.org>, check with `node -v`), an agent wallet (below) and an agent that supports skills.
 
 ```bash
 npm install -g github:{{OWNER}}/{{REPO}}
@@ -38,12 +38,20 @@ onstate --version
 
 (`-a claude-code` installs the skill for Claude Code; leave it out to choose another agent.)
 
+If `npm install -g` stops with `EACCES` (permission denied; common on macOS), give npm a folder of your own, open a new terminal window and run the install again:
+
+```bash
+npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+```
+
 ### An agent wallet (one of two)
 
 - **OKX Agentic Wallet** (tested live): download the `onchainos` release binary for your system from
-  <https://github.com/okx/onchainos-skills/releases>, verify its checksum against `checksums.txt` on the same page, make it executable and put
-  it on your PATH. Then `onchainos wallet login`, finish the login in the browser and run the `completeLogin` command it prints. Set small limits at
-  <https://web3.okx.com/portfolio/agentic-wallet-policy>.
+  <https://github.com/okx/onchainos-skills/releases>, verify its checksum against `checksums.txt` on the same page (`shasum -a 256 <file>`),
+  `chmod +x` it and put it on your PATH (for example into `~/.npm-global/bin`). If macOS refuses to open a file you downloaded with the browser, and
+  only after the checksum matched, `xattr -d com.apple.quarantine <file>` lifts that block. Then `onchainos wallet login`, finish the login in the
+  browser and run the `completeLogin` command it prints. Set small limits at <https://web3.okx.com/portfolio/agentic-wallet-policy>.
 - **Binance Agentic Wallet** (documented by Binance, not tested live by us): `npm install -g @binance/agentic-wallet`, `baw auth signin`, scan the QR code in the Binance app and turn on
   Developer Mode with a small daily limit. Availability depends on your region.
 
