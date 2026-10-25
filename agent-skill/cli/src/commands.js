@@ -548,8 +548,23 @@ const HELP = `onstate - agent CLI for an On-Chain State on Solana (signing is do
 env: ONSTATE_RPC_URL, ONSTATE_MINT (default: ${CONFIG.mint}), ONSTATE_PROGRAM, ONSTATE_SIGNER (auto = the first installed and signed-in wallet, okx, baw; now: ${CONFIG.signer}),
      ONSTATE_OKX_BIN, ONSTATE_BAW_CHAIN_ID (default ${CONFIG.chainId}), ONSTATE_TX_FORMAT`
 
+/** The version of this package: the root package.json of the published repository, or cli/package.json in the development tree. */
+function packageVersion() {
+  for (const p of ['../../package.json', '../package.json']) {
+    try {
+      const j = require(p)
+      if (j && j.name === 'onstate-cli') return j.version
+    } catch { /* try the next location */ }
+  }
+  return 'unknown'
+}
+
 async function run(argv) {
   const { cmd, opts, flags } = parseArgs(argv)
+  if (cmd === 'version' || flags.has('version') || argv[0] === '-v') {
+    out({ success: true, name: 'onstate-cli', version: packageVersion() })
+    return
+  }
   try {
     let result
     switch (cmd) {

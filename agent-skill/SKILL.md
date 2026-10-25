@@ -45,9 +45,9 @@ The default state is a **test state with tiny amounts** (fractions of one SOL). 
 Something may be missing. Go through it in this order, one thing at a time, and **never install or download anything yourself without the
 user's explicit yes**:
 
-1. **`onstate` itself is missing** (`command not found`). Tell the user that the helper tool is not installed. Give an install command only
-   if the project documents one in the README that came with this skill; never guess a package name and never run a script from the
-   internet. After the user has installed it, run `onstate preflight`.
+1. **`onstate` itself is missing** (`command not found`). Tell the user that the helper tool is not installed. The only install command
+   you may suggest is the one in [setup.md](references/setup.md); never guess a package name and never run a script from the internet.
+   After the user has installed it, run `onstate preflight` (it also reports what else is missing).
 2. **No agent wallet CLI** (`NO_WALLET_CLI`): pass on the `fix` text. Installing a wallet program is the user's decision and action.
 3. **Not signed in** (`NOT_SIGNED_IN`): the user finishes the login in their own browser; you cannot do it for them.
 4. **Almost no SOL** (`LOW_SOL`): show the wallet address in full and ask for about 0.01 SOL for fees; wait for the user.
