@@ -68,7 +68,10 @@ copyTree(path.join(AS, 'cli', 'bin'), 'cli/bin')
 copyTree(path.join(AS, 'cli', 'src'), 'cli/src')
 copyTree(path.join(AS, 'cli', 'idl'), 'cli/idl')
 
-put('skills/onchain-state/SKILL.md', fs.readFileSync(path.join(AS, 'SKILL.md')))
+const skillText = fs.readFileSync(path.join(AS, 'SKILL.md'), 'utf8')
+const fmEnd = '  requires:\n    bins: [onstate]\n---\n'
+if (skillText.split(fmEnd).length !== 2) die('SKILL.md front matter has changed: update the install-entry patch in make-bundle.js')
+put('skills/onchain-state/SKILL.md', skillText.replace(fmEnd, `  requires:\n    bins: [onstate]\n  install:\n    - kind: node\n      package: 'github:${OWNER}/${REPO}'\n      bins: [onstate]\n      label: On-Chain State CLI\n---\n`))
 copyTree(path.join(AS, 'references'), 'skills/onchain-state/references', (n) => n !== 'setup.md')
 put('skills/onchain-state/references/setup.md', render(fs.readFileSync(path.join(TPL, 'setup.md'), 'utf8')))
 
@@ -95,6 +98,12 @@ const pkg = {
   keywords: ['solana', 'ai-agent', 'agent-skill', 'governance', 'dao'],
 }
 put('package.json', JSON.stringify(pkg, null, 2) + '\n')
+let lockNote = 'package-lock.json generated (dependency versions are pinned)'
+try {
+  execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: OUT, stdio: 'pipe', timeout: 120000 })
+} catch (e) {
+  lockNote = 'WARNING: package-lock.json was NOT generated (' + String((e && e.message) || e).split('\n')[0] + '). Dependencies will not be pinned.'
+}
 
 // ---------- checks ----------
 const FORBIDDEN = [
@@ -113,8 +122,9 @@ const files = []
 const problems = []
 for (const f of files) {
   const text = fs.readFileSync(f, 'utf8')
+  const rules = path.basename(f) === 'package-lock.json' ? FORBIDDEN.filter((rx) => /Users|home|C:|Desktop|onchain-state-solana-main|SolanaState|\\\{/.test(rx.source)) : FORBIDDEN
   text.split('\n').forEach((line, i) => {
-    for (const rx of FORBIDDEN) if (rx.test(line)) problems.push(`${path.relative(OUT, f)}:${i + 1} matches ${rx}: ${line.trim().slice(0, 110)}`)
+    for (const rx of rules) if (rx.test(line)) problems.push(`${path.relative(OUT, f)}:${i + 1} matches ${rx}: ${line.trim().slice(0, 110)}`)
   })
   if (f.endsWith('.js')) {
     try { execFileSync(process.execPath, ['--check', f], { stdio: 'pipe' }) } catch (e) { problems.push(`${path.relative(OUT, f)}: does not parse: ${String(e.stderr || e.message).split('\n')[0]}`) }
@@ -127,6 +137,7 @@ const total = files.reduce((s, f) => s + fs.statSync(f).size, 0)
 console.log(`bundle for github.com/${OWNER}/${REPO} written to ${OUT}`)
 for (const f of files.sort()) console.log(`  ${String(fs.statSync(f).size).padStart(8)}  ${path.relative(OUT, f)}`)
 console.log(`  ${files.length} files, ${(total / 1024).toFixed(0)} KiB`)
+console.log('  ' + lockNote)
 if (problems.length) {
   console.error('\nPROBLEMS (fix them before uploading anything):')
   problems.forEach((p) => console.error('  ' + p))
