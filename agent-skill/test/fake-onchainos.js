@@ -30,7 +30,7 @@ fs.mkdirSync(DIR, { recursive: true })
 const out = (o, code = 0) => { console.log(JSON.stringify(o)); process.exit(code) }
 const opt = (name) => { const i = argv.indexOf('--' + name); return i >= 0 ? argv[i + 1] : undefined }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const log = (line) => fs.appendFileSync(path.join(DIR, 'calls.log'), line + '\n')
+const log = (line) => fs.appendFileSync(path.join(DIR, 'calls.log'), new Date().toISOString() + ' ' + line + (argv.includes('--force') ? '  [--force]' : '') + '\n')
 
 const decodeTx = (payload, encoding) =>
   web3.VersionedTransaction.deserialize(encoding === 'base64' ? Buffer.from(payload, 'base64') : Uint8Array.from(bs58.decode(payload)))
